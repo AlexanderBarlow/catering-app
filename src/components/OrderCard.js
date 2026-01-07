@@ -1,7 +1,12 @@
 import { Pressable, Text, View } from "react-native";
 import StatusPill from "./StatusPill";
 
-function getTimeLabel(order) {
+const CFA_RED = "#E51636";
+const INK = "#0B1220";
+const MUTED = "rgba(11,18,32,0.62)";
+const BORDER = "rgba(11,18,32,0.10)";
+
+function getWhen(order) {
     const raw =
         order.pickupAt ||
         order.scheduledFor ||
@@ -9,28 +14,37 @@ function getTimeLabel(order) {
         order.eventDate ||
         order.createdAt;
 
-    if (!raw) return "—";
+    if (!raw) return { time: "—", dateShort: null };
 
     const d = new Date(raw);
-    if (!Number.isFinite(d.getTime())) return String(raw);
+    if (!Number.isFinite(d.getTime())) return { time: String(raw), dateShort: null };
 
-    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const dateShort = d.toLocaleDateString([], { month: "short", day: "numeric" }); // Jan 7
+    return { time, dateShort };
 }
 
-function getDateKey(order) {
+function getServiceType(order) {
     const raw =
-        order.pickupAt ||
-        order.scheduledFor ||
-        order.readyAt ||
-        order.eventDate ||
-        order.createdAt;
+        order.serviceType ||
+        order.fulfillmentType ||
+        order.orderType ||
+        order.type ||
+        order.deliveryType;
 
-    if (!raw) return null;
+    const str = raw ? String(raw).toUpperCase() : "";
 
-    const d = new Date(raw);
-    if (!Number.isFinite(d.getTime())) return null;
+    if (str.includes("DELIV")) return "DELIVERY";
+    if (str.includes("PICK")) return "PICKUP";
 
-    return d.toISOString().slice(0, 10);
+    const hasAddress =
+        !!order.deliveryAddress ||
+        !!order.address ||
+        !!order.dropoffAddress ||
+        !!order.destination;
+
+    if (hasAddress) return "DELIVERY";
+    return "PICKUP";
 }
 
 function getCustomerName(order) {
@@ -63,169 +77,218 @@ function getItems(order) {
 }
 
 function compactItemLabel(name) {
-    // Keep lines readable on mobile (no crazy truncation, just gentle)
     if (!name) return "Item";
-    return name.length > 34 ? `${name.slice(0, 33)}…` : name;
+    return name.length > 38 ? `${name.slice(0, 37)}…` : name;
 }
 
-function ItemRow({ name, qty }) {
+function ServicePill({ type }) {
+    const isDelivery = type === "DELIVERY";
+    return (
+        <View
+            style={{
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 999,
+                backgroundColor: isDelivery ? "rgba(229,22,54,0.10)" : "rgba(11,18,32,0.06)",
+                borderWidth: 1,
+                borderColor: isDelivery ? "rgba(229,22,54,0.22)" : "rgba(11,18,32,0.10)",
+            }}
+            accessibilityRole="text"
+            accessibilityLabel={isDelivery ? "Delivery" : "Pickup"}
+        >
+            <Text
+                style={{
+                    fontSize: 12,
+                    fontWeight: "900",
+                    color: isDelivery ? CFA_RED : INK,
+                    opacity: isDelivery ? 1 : 0.85,
+                    letterSpacing: 0.2,
+                }}
+            >
+                {isDelivery ? "DELIVERY" : "PICKUP"}
+            </Text>
+        </View>
+    );
+}
+
+function MiniRow({ left, right }) {
+    return (
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+            <Text style={{ fontSize: 12, fontWeight: "800", color: "rgba(11,18,32,0.70)" }} numberOfLines={1}>
+                {left}
+            </Text>
+            <Text style={{ fontSize: 12, fontWeight: "900", color: INK }}>
+                {right}
+            </Text>
+        </View>
+    );
+}
+
+function ItemLine({ name, qty, idx }) {
     return (
         <View
             style={{
                 flexDirection: "row",
                 alignItems: "center",
                 gap: 10,
-                paddingVertical: 7,
+                paddingTop: idx === 0 ? 10 : 8,
             }}
         >
             <View
                 style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 10,
-                    backgroundColor: "rgba(15, 23, 42, 0.06)",
+                    minWidth: 22,
+                    height: 22,
+                    paddingHorizontal: 7,
+                    borderRadius: 999,
+                    backgroundColor: "rgba(11,18,32,0.06)",
+                    borderWidth: 1,
+                    borderColor: "rgba(11,18,32,0.10)",
                     alignItems: "center",
                     justifyContent: "center",
-                    borderWidth: 1,
-                    borderColor: "rgba(15, 23, 42, 0.08)",
                 }}
+                accessibilityElementsHidden
             >
-                <Text style={{ fontWeight: "900", fontSize: 12, opacity: 0.85 }}>
+                <Text style={{ fontWeight: "900", fontSize: 12, color: INK, opacity: 0.9 }}>
                     {qty}
                 </Text>
             </View>
 
-            <Text
-                style={{
-                    flex: 1,
-                    fontSize: 13,
-                    fontWeight: "700",
-                    opacity: 0.86,
-                }}
-                numberOfLines={1}
-            >
+            <Text style={{ flex: 1, fontSize: 13, fontWeight: "800", color: INK, opacity: 0.88 }} numberOfLines={1}>
                 {compactItemLabel(name)}
             </Text>
         </View>
     );
 }
 
-export default function OrderCard({
-    order,
-    onPress,
-    showStatus = false, // for Today quick view
-}) {
-    const timeLabel = getTimeLabel(order);
+export default function OrderCard({ order, onPress, showStatus = false }) {
     const customer = getCustomerName(order);
     const items = getItems(order);
 
-    // Readability rules: show 3 items max, then "+ more"
     const preview = items.slice(0, 3);
     const remaining = items.length - preview.length;
 
-    const hasItems = preview.length > 0;
-    const dateKey = getDateKey(order);
+    const { time, dateShort } = getWhen(order);
+    const serviceType = getServiceType(order);
+
+    const isDelivery = serviceType === "DELIVERY";
 
     return (
         <Pressable
             onPress={onPress}
+            accessibilityRole="button"
+            accessibilityLabel={`Open order for ${customer}`}
             style={({ pressed }) => [
                 {
                     backgroundColor: "white",
-                    borderRadius: 18,
+                    borderRadius: 22,
                     padding: 14,
                     marginBottom: 12,
                     borderWidth: 1,
-                    borderColor: "rgba(15, 23, 42, 0.08)",
+                    borderColor: pressed ? "rgba(229,22,54,0.28)" : BORDER,
                     shadowColor: "#000",
-                    shadowOpacity: 0.08,
+                    shadowOpacity: pressed ? 0.06 : 0.10,
                     shadowRadius: 18,
                     shadowOffset: { width: 0, height: 10 },
+                    elevation: pressed ? 6 : 10,
                     transform: [{ scale: pressed ? 0.985 : 1 }],
                 },
             ]}
         >
-            {/* Header */}
-            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
-                {/* Time badge */}
-                <View
-                    style={{
-                        minWidth: 78,
-                        paddingVertical: 10,
-                        paddingHorizontal: 10,
-                        borderRadius: 14,
-                        backgroundColor: "rgba(0, 0, 0, 0.92)",
-                        alignItems: "center",
-                        justifyContent: "center",
-                    }}
-                >
-                    <Text style={{ color: "white", fontWeight: "900", fontSize: 14 }}>
-                        {timeLabel}
-                    </Text>
-                    {dateKey ? (
-                        <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, marginTop: 2 }}>
-                            {dateKey.slice(5)}
-                        </Text>
-                    ) : null}
-                </View>
+            {/* Sleek accent rail */}
+            <View
+                style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 12,
+                    bottom: 12,
+                    width: 4,
+                    borderTopRightRadius: 999,
+                    borderBottomRightRadius: 999,
+                    backgroundColor: isDelivery ? CFA_RED : "rgba(11,18,32,0.55)",
+                    opacity: 0.95,
+                }}
+                accessibilityElementsHidden
+            />
 
-                {/* Name + meta */}
-                <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 16, fontWeight: "900" }} numberOfLines={1}>
+            {/* Top row */}
+            <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <View style={{ flex: 1, paddingLeft: 6 }}>
+                    <Text style={{ fontSize: 16, fontWeight: "900", color: INK }} numberOfLines={1}>
                         {customer}
                     </Text>
 
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                        <ServicePill type={serviceType} />
+                        {showStatus ? <StatusPill status={order.status} /> : null}
                         <View
                             style={{
                                 paddingHorizontal: 10,
                                 paddingVertical: 6,
                                 borderRadius: 999,
-                                backgroundColor: "rgba(15, 23, 42, 0.06)",
+                                backgroundColor: "rgba(229,22,54,0.06)",
                                 borderWidth: 1,
-                                borderColor: "rgba(15, 23, 42, 0.08)",
+                                borderColor: "rgba(229,22,54,0.14)",
                             }}
+                            accessibilityRole="text"
+                            accessibilityLabel={`${items.length} items`}
                         >
-                            <Text style={{ fontSize: 12, fontWeight: "800", opacity: 0.75 }}>
+                            <Text style={{ fontSize: 12, fontWeight: "900", color: "rgba(11,18,32,0.80)" }}>
                                 {items.length} item{items.length === 1 ? "" : "s"}
                             </Text>
                         </View>
-
-                        {showStatus ? <StatusPill status={order.status} /> : null}
                     </View>
+                </View>
+
+                {/* Right meta (clean, no bubble) */}
+                <View style={{ alignItems: "flex-end", gap: 6 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <Text style={{ fontSize: 18, fontWeight: "900", color: INK }}>{time}</Text>
+                        <Text style={{ fontSize: 16, fontWeight: "900", color: "rgba(11,18,32,0.45)" }}>
+                            →
+                        </Text>
+                    </View>
+
+                    {dateShort ? (
+                        <Text style={{ fontSize: 12, fontWeight: "800", color: MUTED }}>
+                            {dateShort}
+                        </Text>
+                    ) : null}
                 </View>
             </View>
 
-            {/* Divider */}
+            {/* Items preview */}
             <View
                 style={{
-                    height: 1,
-                    backgroundColor: "rgba(15, 23, 42, 0.08)",
                     marginTop: 12,
-                    marginBottom: 10,
+                    paddingTop: 8,
+                    borderTopWidth: 1,
+                    borderTopColor: "rgba(11,18,32,0.08)",
+                    paddingLeft: 6,
                 }}
-            />
+            >
+                {preview.length === 0 ? (
+                    <Text style={{ fontSize: 13, color: MUTED, fontWeight: "700" }}>
+                        No items listed
+                    </Text>
+                ) : (
+                    <>
+                        {preview.map((it, idx) => (
+                            <ItemLine key={`${it.name}-${idx}`} name={it.name} qty={it.qty} idx={idx} />
+                        ))}
 
-            {/* Items */}
-            {!hasItems ? (
-                <Text style={{ fontSize: 13, opacity: 0.65 }}>
-                    No items listed
-                </Text>
-            ) : (
-                <View style={{ gap: 2 }}>
-                    {preview.map((it, idx) => (
-                        <ItemRow key={`${it.name}-${idx}`} name={it.name} qty={it.qty} />
-                    ))}
-
-                    {remaining > 0 ? (
-                        <View style={{ marginTop: 6 }}>
-                            <Text style={{ fontSize: 12, opacity: 0.65, fontWeight: "800" }}>
+                        {remaining > 0 ? (
+                            <Text style={{ marginTop: 10, fontSize: 12, fontWeight: "900", color: MUTED }}>
                                 + {remaining} more
                             </Text>
-                        </View>
-                    ) : null}
-                </View>
-            )}
+                        ) : null}
+                    </>
+                )}
+            </View>
+
+            {/* Bottom affordance */}
+            <View style={{ marginTop: 12, paddingLeft: 6 }}>
+                <MiniRow left="Tap to open details" right="Details" />
+            </View>
         </Pressable>
     );
 }
