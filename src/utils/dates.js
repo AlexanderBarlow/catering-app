@@ -12,3 +12,24 @@ export function weekDays(date = new Date()) {
 export function pretty(date) {
     return format(date, "EEE, MMM d");
 }
+
+function yyyyMmDdLocalFromRaw(raw) {
+    if (!raw) return null;
+
+    // If it's already "YYYY-MM-DD..." just take the date part (no TZ shift)
+    const s = String(raw);
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+
+    const d = new Date(raw);
+    if (!Number.isFinite(d.getTime())) return null;
+
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`; // LOCAL date key
+}
+
+function getOrderDateKeyLocal(o) {
+    const raw = o.pickupAt || o.scheduledFor || o.readyAt || o.eventDate || o.createdAt;
+    return yyyyMmDdLocalFromRaw(raw);
+}

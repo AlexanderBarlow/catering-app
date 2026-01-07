@@ -6,23 +6,56 @@ const INK = "#0B1220";
 const MUTED = "rgba(11,18,32,0.62)";
 const BORDER = "rgba(11,18,32,0.10)";
 
+function parseLocalDateOnly(dateStr) {
+    // dateStr = "YYYY-MM-DD"
+    // Use midday local time to avoid timezone/DST rollbacks shifting the day.
+    const d = new Date(`${dateStr}T12:00:00`);
+    return Number.isFinite(d.getTime()) ? d : null;
+}
+
 function getWhen(order) {
-    const raw =
-        order.pickupAt ||
-        order.scheduledFor ||
-        order.readyAt ||
-        order.eventDate ||
-        order.createdAt;
+    // TIME: real timestamp (local time display)
+    const timeRaw = order.pickupAt || order.scheduledFor || order.readyAt || order.createdAt;
 
-    if (!raw) return { time: "—", dateShort: null };
+    let time = "—";
+    if (timeRaw) {
+        const td = new Date(timeRaw);
+        time = Number.isFinite(td.getTime())
+            ? td.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+            : String(timeRaw);
+    }
 
-    const d = new Date(raw);
-    if (!Number.isFinite(d.getTime())) return { time: String(raw), dateShort: null };
+    // DATE: prefer business day if we can get a YYYY-MM-DD from it
+    const businessRaw = order.eventDate || order.pickupAt || order.scheduledFor || order.readyAt || order.createdAt;
 
-    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    const dateShort = d.toLocaleDateString([], { month: "short", day: "numeric" }); // Jan 7
+    let dateShort = null;
+
+    if (businessRaw) {
+        const s = String(businessRaw);
+
+        // If string contains a YYYY-MM-DD anywhere at the start, grab it
+        // Works for "2026-01-06", "2026-01-06T00:00:00.000Z", etc.
+        const match = s.match(/^(\d{4}-\d{2}-\d{2})/);
+        const ymd = match?.[1];
+
+        if (ymd) {
+            // Treat as LOCAL date (avoid UTC shift)
+            const dd = parseLocalDateOnly(ymd);
+            if (dd) dateShort = dd.toLocaleDateString([], { month: "short", day: "numeric" });
+        } else {
+            // If no ymd, fall back to parsing normally
+            const dd = new Date(businessRaw);
+            if (Number.isFinite(dd.getTime())) {
+                dateShort = dd.toLocaleDateString([], { month: "short", day: "numeric" });
+            }
+        }
+    }
+
     return { time, dateShort };
 }
+
+
+
 
 function getServiceType(order) {
     const raw =

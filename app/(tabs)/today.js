@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { View, Text, Pressable, FlatList, RefreshControl } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fetchOrdersByRange } from "../../src/api/orders";
 import { yyyyMmDd } from "../../src/utils/dates";
 import OrderCard from "../../src/components/OrderCard";
@@ -9,174 +10,180 @@ import OrderCard from "../../src/components/OrderCard";
 const CFA_RED = "#E51636";
 const BG = "#FFF6F2";
 const INK = "#0B1220";
+const MUTED = "rgba(11,18,32,0.62)";
 const BORDER = "rgba(11,18,32,0.10)";
-const MUTED = "rgba(11,18,32,0.60)";
 
 const FILTERS = ["ALL", "PENDING", "IN_PROGRESS", "COMPLETED"];
 
-function prettyStatusLabel(s) {
-    if (s === "ALL") return "All";
-    return s.replace("_", " ").toLowerCase().replace(/(^\w|\s\w)/g, (m) => m.toUpperCase());
+function addDays(date, days) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + days);
+    return d;
+}
+
+function yyyyMmDdLocalFromRaw(raw) {
+    if (!raw) return null;
+    const s = String(raw);
+    const match = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match?.[1]) return match[1];
+
+    const d = new Date(raw);
+    if (!Number.isFinite(d.getTime())) return null;
+
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+
+function getOrderDayKey(order) {
+    // Prefer business day if present
+    const raw =
+        order.eventDate ||
+        order.pickupAt ||
+        order.scheduledFor ||
+        order.readyAt ||
+        order.createdAt;
+
+    return yyyyMmDdLocalFromRaw(raw);
+}
+
+function getOrderSortTime(order) {
+    const raw = order.pickupAt || order.scheduledFor || order.readyAt || order.createdAt || order.eventDate;
+    if (!raw) return 0;
+
+    const s = String(raw);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        const d = new Date(`${s}T12:00:00`);
+        return Number.isFinite(d.getTime()) ? d.getTime() : 0;
+    }
+
+    const d = new Date(raw);
+    return Number.isFinite(d.getTime()) ? d.getTime() : 0;
 }
 
 export default function Today() {
     const router = useRouter();
+    const insets = useSafeAreaInsets();
+
     const [status, setStatus] = useState("ALL");
 
-    const todayStr = useMemo(() => yyyyMmDd(new Date()), []);
-    const queryKey = ["orders", "day", todayStr, status];
+    const today = useMemo(() => new Date(), []);
+    const todayKey = useMemo(() => yyyyMmDd(today), [today]);
+    const tomorrowKey = useMemo(() => yyyyMmDd(addDays(today, 1)), [today]);
+
+    // IMPORTANT: query tomorrow as end boundary to avoid empty same-day ranges
+    const queryKey = ["orders", "today", todayKey, tomorrowKey, status];
 
     const { data, isLoading, refetch, isFetching, error } = useQuery({
         queryKey,
         queryFn: async () => {
-            const res = await fetchOrdersByRange({ from: todayStr, to: todayStr, status });
+            const res = await fetchOrdersByRange({
+                from: todayKey,
+                to: tomorrowKey, // end-exclusive friendly
+                status,
+            });
             return Array.isArray(res) ? res : (res?.data || []);
         },
     });
 
-    const orders = data || [];
+    const all = data || [];
 
-    // Sort orders by scheduled time (best-effort)
-    const sortedOrders = useMemo(() => {
-        const getTime = (o) => {
-            const raw = o.pickupAt || o.scheduledFor || o.readyAt || o.eventDate || o.createdAt;
-            const t = raw ? new Date(raw).getTime() : 0;
-            return Number.isFinite(t) ? t : 0;
-        };
-        return [...orders].sort((a, b) => getTime(a) - getTime(b));
-    }, [orders]);
-
-    const count = sortedOrders.length;
+    // Filter down to "today" by business-date key (consistent with week view)
+    const todayOrders = useMemo(() => {
+        const filtered = all.filter((o) => getOrderDayKey(o) === todayKey);
+        return filtered.sort((a, b) => getOrderSortTime(a) - getOrderSortTime(b));
+    }, [all, todayKey]);
 
     return (
-        <View style={{ flex: 1, padding: 14, backgroundColor: BG }}>
-            {/* Top strip (no duplicate "Today" — header already says it) */}
-            <View
-                style={{
-                    backgroundColor: "white",
-                    borderRadius: 18,
-                    padding: 12,
-                    borderWidth: 1,
-                    borderColor: BORDER,
-                    marginBottom: 12,
-                }}
-            >
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                    <View style={{ flex: 1 }}>
-                        <Text style={{ fontWeight: "900", color: INK, fontSize: 13 }}>
-                            {todayStr}
-                        </Text>
-                        <Text style={{ marginTop: 2, color: MUTED, fontWeight: "700", fontSize: 12 }}>
-                            {isLoading ? "Loading catering list…" : `${count} order${count === 1 ? "" : "s"} scheduled`}
-                        </Text>
-                    </View>
-
-                    <View
-                        style={{
-                            paddingHorizontal: 10,
-                            paddingVertical: 8,
-                            borderRadius: 999,
-                            backgroundColor: "rgba(229,22,54,0.10)",
-                            borderWidth: 1,
-                            borderColor: "rgba(229,22,54,0.18)",
-                        }}
-                        accessibilityElementsHidden
-                    >
-                        <Text style={{ color: CFA_RED, fontWeight: "900", fontSize: 12 }}>
-                            Catering
-                        </Text>
-                    </View>
-                </View>
-            </View>
-
-            {/* Filters */}
-            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-                {FILTERS.map((f) => {
-                    const active = f === status;
-                    return (
-                        <Pressable
-                            key={f}
-                            onPress={() => setStatus(f)}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Filter ${prettyStatusLabel(f)}`}
-                            style={({ pressed }) => [
-                                {
-                                    paddingHorizontal: 12,
-                                    paddingVertical: 9,
-                                    borderRadius: 999,
-                                    borderWidth: 1,
-                                    borderColor: active ? "rgba(229,22,54,0.28)" : BORDER,
-                                    backgroundColor: active ? "rgba(229,22,54,0.12)" : "white",
-                                    transform: [{ scale: pressed ? 0.985 : 1 }],
-                                },
-                            ]}
-                        >
-                            <Text
-                                style={{
-                                    color: active ? INK : "rgba(11,18,32,0.70)",
-                                    fontWeight: active ? "900" : "800",
-                                    fontSize: 12,
-                                }}
-                            >
-                                {prettyStatusLabel(f)}
-                            </Text>
-
-                            {/* subtle underline dot */}
-                            {active ? (
-                                <View
-                                    style={{
-                                        marginTop: 6,
-                                        alignSelf: "center",
-                                        height: 3,
-                                        width: 18,
-                                        borderRadius: 999,
-                                        backgroundColor: CFA_RED,
-                                        opacity: 0.9,
-                                    }}
-                                />
-                            ) : null}
-                        </Pressable>
-                    );
-                })}
-            </View>
-
-            {error ? (
+        <View style={{ flex: 1, backgroundColor: BG, paddingTop: Math.max(insets.top, 12) }}>
+            <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
                 <View
                     style={{
-                        padding: 12,
                         backgroundColor: "white",
-                        borderRadius: 18,
+                        borderRadius: 24,
+                        padding: 14,
                         borderWidth: 1,
-                        borderColor: "rgba(229,22,54,0.22)",
-                        marginBottom: 12,
+                        borderColor: BORDER,
                     }}
                 >
-                    <Text style={{ fontWeight: "900", color: INK }}>Couldn’t load orders</Text>
-                    <Text style={{ opacity: 0.75, marginTop: 4, color: INK }}>
-                        {String(error.message || error)}
+                    <Text style={{ fontSize: 22, fontWeight: "900", color: INK }}>Today</Text>
+                    <Text style={{ marginTop: 4, color: MUTED, fontWeight: "700" }}>
+                        {todayKey} • {todayOrders.length} order{todayOrders.length === 1 ? "" : "s"}
                     </Text>
+
+                    {/* Filters */}
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                        {FILTERS.map((f) => {
+                            const active = f === status;
+                            return (
+                                <Pressable
+                                    key={f}
+                                    onPress={() => setStatus(f)}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Filter ${f}`}
+                                    style={({ pressed }) => [
+                                        {
+                                            paddingHorizontal: 12,
+                                            paddingVertical: 9,
+                                            borderRadius: 999,
+                                            backgroundColor: active ? "rgba(229,22,54,0.12)" : "white",
+                                            borderWidth: 1,
+                                            borderColor: active ? "rgba(229,22,54,0.22)" : BORDER,
+                                            transform: [{ scale: pressed ? 0.99 : 1 }],
+                                        },
+                                    ]}
+                                >
+                                    <Text style={{ color: INK, fontWeight: "900", fontSize: 12, opacity: active ? 1 : 0.75 }}>
+                                        {f === "ALL" ? "All" : f.replace("_", " ")}
+                                    </Text>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
+
+                    {error ? (
+                        <View
+                            style={{
+                                marginTop: 12,
+                                padding: 12,
+                                backgroundColor: "rgba(229,22,54,0.06)",
+                                borderRadius: 16,
+                                borderWidth: 1,
+                                borderColor: "rgba(229,22,54,0.16)",
+                            }}
+                        >
+                            <Text style={{ fontWeight: "900", color: INK }}>Couldn’t load orders</Text>
+                            <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
+                                {String(error.message || error)}
+                            </Text>
+                        </View>
+                    ) : null}
                 </View>
-            ) : null}
+            </View>
 
             <FlatList
-                data={sortedOrders}
+                data={todayOrders}
                 keyExtractor={(item) => item.id}
                 refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} />}
-                contentContainerStyle={{ paddingBottom: 28 }}
+                contentContainerStyle={{
+                    paddingHorizontal: 14,
+                    paddingBottom: Math.max(insets.bottom, 12) + 70,
+                }}
                 ListEmptyComponent={
                     <View
                         style={{
-                            padding: 18,
                             backgroundColor: "white",
-                            borderRadius: 20,
+                            borderRadius: 24,
+                            padding: 16,
                             borderWidth: 1,
                             borderColor: BORDER,
                         }}
                     >
                         <Text style={{ fontWeight: "900", fontSize: 16, color: INK }}>
-                            {isLoading ? "Loading…" : "No orders scheduled"}
+                            {isLoading ? "Loading..." : "No orders for today"}
                         </Text>
-                        <Text style={{ opacity: 0.65, marginTop: 6, color: INK }}>
+                        <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
                             Pull down to refresh.
                         </Text>
                     </View>
