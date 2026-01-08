@@ -1,5 +1,9 @@
 import { Tabs } from "expo-router";
+<<<<<<< HEAD
+import { View, Text, Pressable, Platform, StyleSheet } from "react-native";
+=======
 import { View, Text, Pressable, Platform } from "react-native";
+>>>>>>> bb733d7 (pulling)
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BlurView } from "expo-blur";
 
