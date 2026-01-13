@@ -43,12 +43,82 @@ function getOrderDayKey(order) {
     // Prefer business day if present
     const raw =
         order.eventDate ||
+        order.pickupTime || // ✅ prefer schema field
         order.pickupAt ||
         order.scheduledFor ||
         order.readyAt ||
         order.createdAt;
 
     return yyyyMmDdLocalFromRaw(raw);
+}
+
+/** ---------------------------
+ *  Kitchen filtering (no sauces)
+ *  --------------------------- */
+function normName(s) {
+    return String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function isSauceLike(rawName) {
+    const n = normName(rawName);
+
+    // catches "8oz Chick-fil-A Sauce", "Polynesian Sauce", "Dressing", "Packets", etc.
+    const sauceKeywords = [
+        "sauce",
+        "dressing",
+        "packet",
+        "packets",
+        "utensil",
+        "utensils",
+        "napkin",
+        "napkins",
+        "plate",
+        "plates",
+        "cup",
+        "cups",
+        "ice",
+        "ketchup",
+        "mustard",
+        "mayo",
+        "mayonnaise",
+        "pickle",
+        "bbq",
+        "barbeque",
+        "polynesian",
+        "ranch",
+        "honey",
+        "buffalo",
+        "sriracha",
+        "vinaigrette",
+    ];
+
+    // quick allow-list so we don't accidentally hide real food with “sauce” in name
+    // (adjust if needed)
+    const allowKeywords = ["sauce pan", "saucepot"]; // basically none for catering
+
+    if (allowKeywords.some((k) => n.includes(k))) return false;
+    return sauceKeywords.some((k) => n.includes(k));
+}
+
+/** High-priority kitchen items (these float to top) */
+function priorityRank(rawName) {
+    const n = normName(rawName);
+
+    const has = (...keys) => keys.every((k) => n.includes(k));
+
+    // Sandwiches (includes spicy/deluxe/grilled/club)
+    if (n.includes("sandwich")) return 1;
+
+    // Hot nugget tray
+    if (has("hot", "nugget") && n.includes("tray")) return 2;
+
+    // Hot strip tray
+    if (has("hot", "strip") && n.includes("tray")) return 3;
+
+    // Grilled bundles
+    if (n.includes("grilled") && n.includes("bundle")) return 4;
+
+    return 999;
 }
 
 function aggregatePrep(orders) {
@@ -64,15 +134,30 @@ function aggregatePrep(orders) {
         for (const it of items) {
             const rawName = it.name || it.title || it.itemName || it.productName || "Unnamed Item";
             const name = String(rawName).trim();
+            if (!name) continue;
+
+            // ✅ remove sauces/non-prep
+            if (isSauceLike(name)) continue;
+
             const qty = Number(it.qty ?? it.quantity ?? it.count ?? 1) || 1;
 
-            map.set(name, (map.get(name) || 0) + qty);
+            // normalize key so same item merges reliably
+            const key = normName(name);
+            const cur = map.get(key);
+
+            map.set(key, {
+                name: cur?.name || name, // keep first original casing we see
+                qty: (cur?.qty || 0) + qty,
+                rank: Math.min(cur?.rank ?? 999, priorityRank(name)),
+            });
         }
     }
 
-    return Array.from(map.entries())
-        .map(([name, qty]) => ({ name, qty }))
-        .sort((a, b) => b.qty - a.qty);
+    return Array.from(map.values()).sort((a, b) => {
+        // ✅ priority items first, then by qty
+        if (a.rank !== b.rank) return a.rank - b.rank;
+        return b.qty - a.qty;
+    });
 }
 
 function QtyPill({ qty }) {
@@ -91,8 +176,36 @@ function QtyPill({ qty }) {
             accessibilityRole="text"
             accessibilityLabel={`Quantity ${qty}`}
         >
-            <Text style={{ fontWeight: "900", color: CFA_RED, fontSize: 14 }}>
-                {qty}
+            <Text style={{ fontWeight: "900", color: CFA_RED, fontSize: 14 }}>{qty}</Text>
+        </View>
+    );
+}
+
+function PriorityTag({ rank }) {
+    if (rank === 999) return null;
+
+    const label =
+        rank === 1 ? "SANDWICH" :
+            rank === 2 ? "HOT NUGGET TRAY" :
+                rank === 3 ? "HOT STRIP TRAY" :
+                    rank === 4 ? "GRILLED BUNDLE" :
+                        "PRIORITY";
+
+    return (
+        <View
+            style={{
+                alignSelf: "flex-start",
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 999,
+                backgroundColor: "rgba(229,22,54,0.08)",
+                borderWidth: 1,
+                borderColor: "rgba(229,22,54,0.16)",
+                marginTop: 10,
+            }}
+        >
+            <Text style={{ fontSize: 11, fontWeight: "950", color: CFA_RED, letterSpacing: 0.2 }}>
+                {label}
             </Text>
         </View>
     );
@@ -107,7 +220,7 @@ export default function Prep() {
     const { data, refetch, isFetching, error } = useQuery({
         queryKey: ["orders", "prep", dateStr, tomorrowStr],
         queryFn: async () => {
-            // ✅ end-exclusive safe range
+            // end-exclusive safe range
             const res = await fetchOrdersByRange({ from: dateStr, to: tomorrowStr });
             return Array.isArray(res) ? res : (res?.data || []);
         },
@@ -115,9 +228,10 @@ export default function Prep() {
 
     const all = data || [];
 
-    // ✅ Keep it consistent with Today/Week: only include orders whose business day is dateStr
+    // only include orders whose business day is dateStr
     const todaysOrders = useMemo(() => all.filter((o) => getOrderDayKey(o) === dateStr), [all, dateStr]);
 
+    // ✅ sauces removed + priority items floated to top
     const prep = useMemo(() => aggregatePrep(todaysOrders), [todaysOrders]);
 
     return (
@@ -138,6 +252,9 @@ export default function Prep() {
                             <Text style={{ marginTop: 4, color: MUTED, fontWeight: "700" }}>
                                 {formatDate(dateStr)} • {prep.length} item{prep.length === 1 ? "" : "s"}
                             </Text>
+                            <Text style={{ marginTop: 6, color: "rgba(11,18,32,0.50)", fontWeight: "800", fontSize: 12 }}>
+                                Kitchen-first: sauces removed. Priority items float to the top.
+                            </Text>
                         </View>
 
                         <Pressable
@@ -156,9 +273,7 @@ export default function Prep() {
                                 },
                             ]}
                         >
-                            <Text style={{ color: CFA_RED, fontWeight: "900", fontSize: 12 }}>
-                                Refresh
-                            </Text>
+                            <Text style={{ color: CFA_RED, fontWeight: "900", fontSize: 12 }}>Refresh</Text>
                         </Pressable>
                     </View>
 
@@ -204,48 +319,59 @@ export default function Prep() {
                             {isFetching ? "Loading…" : "No items to prep"}
                         </Text>
                         <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
-                            This aggregates item quantities across today’s orders.
+                            This aggregates item quantities across today’s orders (excluding sauces).
                         </Text>
                     </View>
                 }
-                renderItem={({ item, index }) => (
-                    <View
-                        style={{
-                            backgroundColor: "white",
-                            padding: 14,
-                            borderRadius: 22,
-                            borderWidth: 1,
-                            borderColor: BORDER,
-                            marginBottom: 10,
-                            shadowColor: "#000",
-                            shadowOpacity: 0.06,
-                            shadowRadius: 16,
-                            shadowOffset: { width: 0, height: 10 },
-                            elevation: 6,
-                        }}
-                    >
-                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                            <View style={{ flex: 1 }}>
-                                <Text style={{ fontSize: 15, fontWeight: "900", color: INK }} numberOfLines={2}>
-                                    {item.name}
-                                </Text>
+                renderItem={({ item, index }) => {
+                    const isPriority = item.rank !== 999;
+                    return (
+                        <View
+                            style={{
+                                backgroundColor: "white",
+                                padding: 14,
+                                borderRadius: 22,
+                                borderWidth: 1,
+                                borderColor: isPriority ? "rgba(229,22,54,0.18)" : BORDER,
+                                marginBottom: 10,
+                                shadowColor: "#000",
+                                shadowOpacity: isPriority ? 0.10 : 0.06,
+                                shadowRadius: 16,
+                                shadowOffset: { width: 0, height: 10 },
+                                elevation: isPriority ? 9 : 6,
+                            }}
+                        >
+                            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                                <View style={{ flex: 1 }}>
+                                    <Text
+                                        style={{
+                                            fontSize: 15,
+                                            fontWeight: isPriority ? "950" : "900",
+                                            color: INK,
+                                        }}
+                                        numberOfLines={2}
+                                    >
+                                        {item.name}
+                                    </Text>
 
-                                <View
-                                    style={{
-                                        marginTop: 8,
-                                        height: 3,
-                                        width: 36,
-                                        borderRadius: 999,
-                                        backgroundColor: index % 2 === 0 ? "rgba(229,22,54,0.85)" : "rgba(11,18,32,0.18)",
-                                    }}
-                                    accessibilityElementsHidden
-                                />
+                                    <View
+                                        style={{
+                                            marginTop: 8,
+                                            height: 3,
+                                            width: isPriority ? 54 : 36,
+                                            borderRadius: 999,
+                                            backgroundColor: isPriority ? "rgba(229,22,54,0.90)" : (index % 2 === 0 ? "rgba(229,22,54,0.70)" : "rgba(11,18,32,0.18)"),
+                                        }}
+                                        accessibilityElementsHidden
+                                    />
+                                    <PriorityTag rank={item.rank} />
+                                </View>
+
+                                <QtyPill qty={item.qty} />
                             </View>
-
-                            <QtyPill qty={item.qty} />
                         </View>
-                    </View>
-                )}
+                    );
+                }}
             />
         </View>
     );

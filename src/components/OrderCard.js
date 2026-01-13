@@ -1,5 +1,8 @@
 import { Pressable, Text, View } from "react-native";
 import StatusPill from "./StatusPill";
+import { pickKitchenPriorityItems } from "../../src/utils/kitchenItems";
+// adjust path to match your structure
+
 
 const CFA_RED = "#E51636";
 const INK = "#0B1220";
@@ -7,15 +10,158 @@ const MUTED = "rgba(11,18,32,0.62)";
 const BORDER = "rgba(11,18,32,0.10)";
 
 function parseLocalDateOnly(dateStr) {
-    // dateStr = "YYYY-MM-DD"
-    // Use midday local time to avoid timezone/DST rollbacks shifting the day.
     const d = new Date(`${dateStr}T12:00:00`);
     return Number.isFinite(d.getTime()) ? d : null;
 }
 
+function isCompletedStatus(status) {
+    const s = String(status || "").toUpperCase();
+    return s === "COMPLETED" || s === "CANCELED";
+}
+
+function isOverdue(order) {
+    const status = order?.status;
+    if (isCompletedStatus(status)) return false;
+
+    const raw = order?.pickupTime || order?.pickupAt || order?.scheduledFor;
+    if (!raw) return false;
+
+    const t = new Date(raw);
+    if (!Number.isFinite(t.getTime())) return false;
+
+    return Date.now() > t.getTime();
+}
+
+function getStatusMeta(status) {
+    const s = String(status || "PENDING_REVIEW").toUpperCase();
+
+    // Tuned for quick scanning + “CFA red” for urgency
+    if (s === "COMPLETED") {
+        return {
+            label: "Completed",
+            icon: "✓",
+            bg: "rgba(34,197,94,0.10)",
+            border: "rgba(34,197,94,0.22)",
+            fg: "rgba(14,116,55,0.95)",
+            rail: "rgba(34,197,94,0.70)",
+        };
+    }
+    if (s === "CANCELED") {
+        return {
+            label: "Canceled",
+            icon: "✕",
+            bg: "rgba(148,163,184,0.18)",
+            border: "rgba(148,163,184,0.28)",
+            fg: "rgba(51,65,85,0.90)",
+            rail: "rgba(100,116,139,0.65)",
+        };
+    }
+    if (s === "READY") {
+        return {
+            label: "Ready",
+            icon: "•",
+            bg: "rgba(59,130,246,0.10)",
+            border: "rgba(59,130,246,0.20)",
+            fg: "rgba(30,64,175,0.95)",
+            rail: "rgba(59,130,246,0.70)",
+        };
+    }
+    if (s === "IN_PROGRESS") {
+        return {
+            label: "In Progress",
+            icon: "↻",
+            bg: "rgba(245,158,11,0.12)",
+            border: "rgba(245,158,11,0.22)",
+            fg: "rgba(146,64,14,0.95)",
+            rail: "rgba(245,158,11,0.72)",
+        };
+    }
+    if (s === "ACCEPTED") {
+        return {
+            label: "Accepted",
+            icon: "✓",
+            bg: "rgba(16,185,129,0.10)",
+            border: "rgba(16,185,129,0.20)",
+            fg: "rgba(6,95,70,0.95)",
+            rail: "rgba(16,185,129,0.70)",
+        };
+    }
+    if (s === "RECEIVED") {
+        return {
+            label: "Received",
+            icon: "↓",
+            bg: "rgba(99,102,241,0.10)",
+            border: "rgba(99,102,241,0.22)",
+            fg: "rgba(49,46,129,0.95)",
+            rail: "rgba(99,102,241,0.70)",
+        };
+    }
+
+    // default = PENDING_REVIEW / unknown
+    return {
+        label: "Needs Review",
+        icon: "!",
+        bg: "rgba(229,22,54,0.08)",
+        border: "rgba(229,22,54,0.18)",
+        fg: CFA_RED,
+        rail: "rgba(229,22,54,0.75)",
+    };
+}
+
+function StatusBadge({ status, overdue }) {
+    const meta = getStatusMeta(status);
+
+    return (
+        <View
+            style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 8,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 999,
+                backgroundColor: meta.bg,
+                borderWidth: 1,
+                borderColor: meta.border,
+            }}
+            accessibilityRole="text"
+            accessibilityLabel={`Status ${meta.label}${overdue ? ", overdue" : ""}`}
+        >
+            <Text style={{ fontSize: 12, fontWeight: "900", color: meta.fg, marginTop: -0.5 }}>
+                {meta.icon}
+            </Text>
+            <Text style={{ fontSize: 12, fontWeight: "900", color: meta.fg }}>
+                {meta.label}
+            </Text>
+
+            {overdue ? (
+                <View
+                    style={{
+                        marginLeft: 6,
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 999,
+                        backgroundColor: "rgba(229,22,54,0.12)",
+                        borderWidth: 1,
+                        borderColor: "rgba(229,22,54,0.22)",
+                    }}
+                >
+                    <Text style={{ fontSize: 11, fontWeight: "950", color: CFA_RED, letterSpacing: 0.2 }}>
+                        OVERDUE
+                    </Text>
+                </View>
+            ) : null}
+        </View>
+    );
+}
+
 function getWhen(order) {
-    // TIME: real timestamp (local time display)
-    const timeRaw = order.pickupAt || order.scheduledFor || order.readyAt || order.createdAt;
+    const timeRaw =
+        order.pickupTime ||
+        order.pickupAt ||
+        order.scheduledFor ||
+        order.readyAt ||
+        order.createdAt;
 
     let time = "—";
     if (timeRaw) {
@@ -25,25 +171,25 @@ function getWhen(order) {
             : String(timeRaw);
     }
 
-    // DATE: prefer business day if we can get a YYYY-MM-DD from it
-    const businessRaw = order.eventDate || order.pickupAt || order.scheduledFor || order.readyAt || order.createdAt;
+    const businessRaw =
+        order.eventDate ||
+        order.pickupTime ||
+        order.pickupAt ||
+        order.scheduledFor ||
+        order.readyAt ||
+        order.createdAt;
 
     let dateShort = null;
 
     if (businessRaw) {
         const s = String(businessRaw);
-
-        // If string contains a YYYY-MM-DD anywhere at the start, grab it
-        // Works for "2026-01-06", "2026-01-06T00:00:00.000Z", etc.
         const match = s.match(/^(\d{4}-\d{2}-\d{2})/);
         const ymd = match?.[1];
 
         if (ymd) {
-            // Treat as LOCAL date (avoid UTC shift)
             const dd = parseLocalDateOnly(ymd);
             if (dd) dateShort = dd.toLocaleDateString([], { month: "short", day: "numeric" });
         } else {
-            // If no ymd, fall back to parsing normally
             const dd = new Date(businessRaw);
             if (Number.isFinite(dd.getTime())) {
                 dateShort = dd.toLocaleDateString([], { month: "short", day: "numeric" });
@@ -53,9 +199,6 @@ function getWhen(order) {
 
     return { time, dateShort };
 }
-
-
-
 
 function getServiceType(order) {
     const raw =
@@ -157,16 +300,9 @@ function MiniRow({ left, right }) {
     );
 }
 
-function ItemLine({ name, qty, idx }) {
+function ItemLine({ name, qty, idx, isPriority }) {
     return (
-        <View
-            style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 10,
-                paddingTop: idx === 0 ? 10 : 8,
-            }}
-        >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingTop: idx === 0 ? 10 : 8 }}>
             <View
                 style={{
                     minWidth: 22,
@@ -179,31 +315,58 @@ function ItemLine({ name, qty, idx }) {
                     alignItems: "center",
                     justifyContent: "center",
                 }}
-                accessibilityElementsHidden
             >
-                <Text style={{ fontWeight: "900", fontSize: 12, color: INK, opacity: 0.9 }}>
-                    {qty}
-                </Text>
+                <Text style={{ fontWeight: "900", fontSize: 12, color: INK, opacity: 0.9 }}>{qty}</Text>
             </View>
 
-            <Text style={{ flex: 1, fontSize: 13, fontWeight: "800", color: INK, opacity: 0.88 }} numberOfLines={1}>
+            {isPriority ? (
+                <View
+                    style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 999,
+                        backgroundColor: "#E51636",
+                        opacity: 0.9,
+                    }}
+                />
+            ) : null}
+
+            <Text
+                style={{
+                    flex: 1,
+                    fontSize: 13,
+                    fontWeight: isPriority ? "950" : "800",
+                    color: INK,
+                    opacity: isPriority ? 0.95 : 0.88,
+                }}
+                numberOfLines={1}
+            >
                 {compactItemLabel(name)}
             </Text>
         </View>
     );
 }
 
-export default function OrderCard({ order, onPress, showStatus = false }) {
+
+export default function OrderCard({ order, onPress, showStatus = true }) {
     const customer = getCustomerName(order);
     const items = getItems(order);
+    const { priority, others } = pickKitchenPriorityItems(items);
 
-    const preview = items.slice(0, 3);
-    const remaining = items.length - preview.length;
+    // show up to 3 priority items; if none, fall back to normal items
+    const previewBase = priority.length ? priority : items;
+    const preview = previewBase.slice(0, 3);
+
+    // remaining count should reflect “base list” you’re previewing
+    const remaining = Math.max(0, previewBase.length - preview.length);
+
 
     const { time, dateShort } = getWhen(order);
     const serviceType = getServiceType(order);
+    const overdue = isOverdue(order);
 
     const isDelivery = serviceType === "DELIVERY";
+    const statusMeta = getStatusMeta(order.status);
 
     return (
         <Pressable
@@ -227,6 +390,30 @@ export default function OrderCard({ order, onPress, showStatus = false }) {
                 },
             ]}
         >
+            {/* Top status strip (subtle premium “scan” affordance) */}
+            <View
+                style={{
+                    position: "absolute",
+                    left: 12,
+                    right: 12,
+                    top: 10,
+                    height: 6,
+                    borderRadius: 999,
+                    backgroundColor: overdue ? "rgba(229,22,54,0.22)" : "rgba(11,18,32,0.06)",
+                    overflow: "hidden",
+                }}
+                accessibilityElementsHidden
+            >
+                <View
+                    style={{
+                        height: "100%",
+                        width: overdue ? "100%" : "60%",
+                        borderRadius: 999,
+                        backgroundColor: overdue ? "rgba(229,22,54,0.72)" : statusMeta.rail,
+                    }}
+                />
+            </View>
+
             {/* Sleek accent rail */}
             <View
                 style={{
@@ -237,14 +424,14 @@ export default function OrderCard({ order, onPress, showStatus = false }) {
                     width: 4,
                     borderTopRightRadius: 999,
                     borderBottomRightRadius: 999,
-                    backgroundColor: isDelivery ? CFA_RED : "rgba(11,18,32,0.55)",
+                    backgroundColor: overdue ? CFA_RED : (isDelivery ? CFA_RED : "rgba(11,18,32,0.55)"),
                     opacity: 0.95,
                 }}
                 accessibilityElementsHidden
             />
 
             {/* Top row */}
-            <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+            <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginTop: 6 }}>
                 <View style={{ flex: 1, paddingLeft: 6 }}>
                     <Text style={{ fontSize: 16, fontWeight: "900", color: INK }} numberOfLines={1}>
                         {customer}
@@ -252,7 +439,11 @@ export default function OrderCard({ order, onPress, showStatus = false }) {
 
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                         <ServicePill type={serviceType} />
-                        {showStatus ? <StatusPill status={order.status} /> : null}
+
+                        {/* New “good looking” status badge */}
+                        {showStatus ? <StatusBadge status={order.status} overdue={overdue} /> : null}
+
+                        {/* Keep your item count pill */}
                         <View
                             style={{
                                 paddingHorizontal: 10,
@@ -272,17 +463,19 @@ export default function OrderCard({ order, onPress, showStatus = false }) {
                     </View>
                 </View>
 
-                {/* Right meta (clean, no bubble) */}
+                {/* Right meta */}
                 <View style={{ alignItems: "flex-end", gap: 6 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <Text style={{ fontSize: 18, fontWeight: "900", color: INK }}>{time}</Text>
+                        <Text style={{ fontSize: 18, fontWeight: "900", color: overdue ? CFA_RED : INK }}>
+                            {time}
+                        </Text>
                         <Text style={{ fontSize: 16, fontWeight: "900", color: "rgba(11,18,32,0.45)" }}>
                             →
                         </Text>
                     </View>
 
                     {dateShort ? (
-                        <Text style={{ fontSize: 12, fontWeight: "800", color: MUTED }}>
+                        <Text style={{ fontSize: 12, fontWeight: "800", color: overdue ? "rgba(229,22,54,0.70)" : MUTED }}>
                             {dateShort}
                         </Text>
                     ) : null}
@@ -320,7 +513,7 @@ export default function OrderCard({ order, onPress, showStatus = false }) {
 
             {/* Bottom affordance */}
             <View style={{ marginTop: 12, paddingLeft: 6 }}>
-                <MiniRow left="Tap to open details" right="Details" />
+                <MiniRow left={overdue ? "Past pickup time — tap to manage" : "Tap to open details"} right="Details" />
             </View>
         </Pressable>
     );

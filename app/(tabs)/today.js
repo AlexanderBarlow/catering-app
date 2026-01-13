@@ -1,26 +1,39 @@
-import { useMemo, useState } from "react";
+// app/(tabs)/today.js
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { View, Text, Pressable, FlatList, RefreshControl } from "react-native";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { fetchOrdersByRange } from "../../src/api/orders";
+
+import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
+import Animated, {
+  interpolate,
+  Extrapolate,
+  useAnimatedStyle,
+  withSpring,
+} from "react-native-reanimated";
+import { Ionicons } from "@expo/vector-icons";
+
+import { fetchOrdersByRange, updateOrderStatus } from "../../src/api/orders";
 import { yyyyMmDd } from "../../src/utils/dates";
 import OrderCard from "../../src/components/OrderCard";
+import { haptic } from "../../src/utils/haptics";
 
-const CFA_RED = "#E51636";
 const BG = "#FFF6F2";
 const INK = "#0B1220";
 const MUTED = "rgba(11,18,32,0.62)";
 const BORDER = "rgba(11,18,32,0.10)";
+const FILTERS = ["ACTIVE", "PENDING", "IN_PROGRESS", "COMPLETED", "ALL"];
 
-const FILTERS = ["ALL", "PENDING", "IN_PROGRESS", "COMPLETED"];
+// small, not ugly
+const ACTION_W = 104;
+const SPRING = { damping: 18, stiffness: 260, mass: 0.9 };
 
 function addDays(date, days) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
 }
-
 function yyyyMmDdLocalFromRaw(raw) {
   if (!raw) return null;
   const s = String(raw);
@@ -35,25 +48,25 @@ function yyyyMmDdLocalFromRaw(raw) {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
-
 function getOrderDayKey(order) {
   const raw =
     order.eventDate ||
+    order.pickupTime || // prefer schema field
     order.pickupAt ||
     order.scheduledFor ||
     order.readyAt ||
     order.createdAt;
-
   return yyyyMmDdLocalFromRaw(raw);
 }
-
 function getOrderSortTime(order) {
   const raw =
+    order.pickupTime || // prefer schema field
     order.pickupAt ||
     order.scheduledFor ||
     order.readyAt ||
     order.createdAt ||
     order.eventDate;
+
   if (!raw) return 0;
 
   const s = String(raw);
@@ -65,182 +78,594 @@ function getOrderSortTime(order) {
   const d = new Date(raw);
   return Number.isFinite(d.getTime()) ? d.getTime() : 0;
 }
-
 function prettyDayTitle(date) {
-  // Example: "Wednesday" (keep it clean since header already says Today at top)
   return date.toLocaleDateString([], { weekday: "long" });
+}
+function normalizeStatus(s) {
+  return String(s || "").toUpperCase();
+}
+function isPendingLikeStatus(status) {
+  const s = normalizeStatus(status);
+  return s === "PENDING_REVIEW" || s === "RECEIVED" || s === "ACCEPTED" || s === "PENDING";
+}
+function isInProgressLikeStatus(status) {
+  const s = normalizeStatus(status);
+  return s === "IN_PROGRESS" || s === "READY";
+}
+function isCompletedLikeStatus(status) {
+  const s = normalizeStatus(status);
+  return s === "COMPLETED" || s === "CANCELED";
+}
+function filterForBoard(order, filter) {
+  const s = normalizeStatus(order?.status);
+  if (filter === "ALL") return true;
+  if (filter === "ACTIVE") return isPendingLikeStatus(s) || isInProgressLikeStatus(s);
+  if (filter === "PENDING") return isPendingLikeStatus(s);
+  if (filter === "IN_PROGRESS") return isInProgressLikeStatus(s);
+  if (filter === "COMPLETED") return isCompletedLikeStatus(s);
+  return true;
+}
+function shouldAutoProgress(order, nowMs) {
+  const pickupRaw = order.pickupTime || order.pickupAt || order.scheduledFor;
+  if (!pickupRaw) return false;
+
+  const pickup = new Date(pickupRaw);
+  if (!Number.isFinite(pickup.getTime())) return false;
+  if (!isPendingLikeStatus(order.status)) return false;
+
+  const diffMs = pickup.getTime() - nowMs;
+  return diffMs <= 15 * 60 * 1000;
+}
+function filterLabel(f) {
+  if (f === "ACTIVE") return "Active";
+  if (f === "ALL") return "All";
+  return f.replace("_", " ");
+}
+function customerNameFromOrder(o) {
+  return o?.customerName || o?.customer || o?.name || o?.contactName || o?.companyName || "Unnamed";
+}
+function humanStatus(s) {
+  const v = normalizeStatus(s);
+  if (!v) return "Unknown";
+  return v
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/^\w/, (c) => c.toUpperCase());
+}
+
+/** ✅ More elegant Undo banner, positioned above bottom tab bar */
+function UndoBanner({ visible, text, onAction, onDismiss, bottomOffset = 0 }) {
+  if (!visible) return null;
+
+  return (
+    <View
+      style={{
+        position: "absolute",
+        left: 14,
+        right: 14,
+        bottom: bottomOffset,
+        zIndex: 999,
+      }}
+      pointerEvents="box-none"
+    >
+      <View
+        style={{
+          borderRadius: 22,
+          overflow: "hidden",
+
+          // elegant glassy card
+          backgroundColor: "rgba(255,255,255,0.92)",
+          borderWidth: 1,
+          borderColor: "rgba(11,18,32,0.10)",
+
+          shadowColor: "#000",
+          shadowOpacity: 0.12,
+          shadowRadius: 18,
+          shadowOffset: { width: 0, height: 12 },
+          elevation: 18,
+        }}
+      >
+        {/* subtle top accent */}
+        <View
+          style={{
+            height: 4,
+            backgroundColor: "rgba(229,22,54,0.60)",
+          }}
+        />
+
+        <View
+          style={{
+            paddingHorizontal: 14,
+            paddingVertical: 12,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          {/* icon bubble */}
+          <View
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 999,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: "rgba(229,22,54,0.10)",
+              borderWidth: 1,
+              borderColor: "rgba(229,22,54,0.16)",
+            }}
+            accessibilityElementsHidden
+          >
+            <Ionicons name="arrow-undo" size={16} color="#E51636" />
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: INK, fontWeight: "950", fontSize: 13 }} numberOfLines={2}>
+              {text}
+            </Text>
+            <Text style={{ marginTop: 2, color: MUTED, fontWeight: "800", fontSize: 12 }}>
+              Tap undo to revert.
+            </Text>
+          </View>
+
+          <Pressable
+            onPress={onAction}
+            style={({ pressed }) => ({
+              paddingHorizontal: 12,
+              paddingVertical: 9,
+              borderRadius: 999,
+              backgroundColor: pressed ? "rgba(229,22,54,0.14)" : "rgba(229,22,54,0.10)",
+              borderWidth: 1,
+              borderColor: "rgba(229,22,54,0.18)",
+              transform: [{ scale: pressed ? 0.985 : 1 }],
+            })}
+          >
+            <Text style={{ color: "#E51636", fontWeight: "950", letterSpacing: 0.2, fontSize: 12 }}>
+              UNDO
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onDismiss}
+            hitSlop={10}
+            style={({ pressed }) => ({
+              width: 34,
+              height: 34,
+              borderRadius: 999,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: pressed ? "rgba(11,18,32,0.06)" : "rgba(11,18,32,0.03)",
+              borderWidth: 1,
+              borderColor: "rgba(11,18,32,0.08)",
+            })}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss"
+          >
+            <Ionicons name="close" size={16} color="rgba(11,18,32,0.60)" />
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function ActionChip({ side, progress, dragX, icon, label, color }) {
+  const style = useAnimatedStyle(() => {
+    const p = progress.value ?? 0;
+
+    const slide =
+      side === "left"
+        ? interpolate(dragX.value ?? 0, [0, ACTION_W], [-10, 0], Extrapolate.CLAMP)
+        : interpolate(dragX.value ?? 0, [-ACTION_W, 0], [0, 10], Extrapolate.CLAMP);
+
+    return {
+      opacity: interpolate(p, [0, 1], [0.15, 1], Extrapolate.CLAMP),
+      transform: [
+        { translateX: withSpring(slide, SPRING) },
+        {
+          scale: withSpring(interpolate(p, [0, 1], [0.98, 1], Extrapolate.CLAMP), SPRING),
+        },
+      ],
+    };
+  });
+
+  return (
+    <View style={{ width: ACTION_W, height: "100%", justifyContent: "center" }}>
+      <Animated.View
+        style={[
+          style,
+          {
+            alignSelf: side === "left" ? "flex-start" : "flex-end",
+            marginHorizontal: 12,
+            borderRadius: 16,
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            backgroundColor: color,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 8,
+          },
+        ]}
+      >
+        <Ionicons name={icon} size={16} color="white" />
+        <Text style={{ color: "white", fontWeight: "900" }} numberOfLines={1}>
+          {label}
+        </Text>
+      </Animated.View>
+    </View>
+  );
+}
+
+function SwipeRow({ item, listRef, openRowRef, closeOpenRow, onToggle, onPress }) {
+  const rowRef = useRef(null);
+
+  const status = normalizeStatus(item?.status);
+  const canSwipe = !isCompletedLikeStatus(status);
+
+  const nextStatus = isPendingLikeStatus(status)
+    ? "IN_PROGRESS"
+    : isInProgressLikeStatus(status)
+      ? "COMPLETED"
+      : null;
+
+  const label = !canSwipe
+    ? "Locked"
+    : nextStatus === "IN_PROGRESS"
+      ? "Start"
+      : nextStatus === "COMPLETED"
+        ? "Complete"
+        : "Locked";
+
+  const icon = !canSwipe
+    ? "lock-closed"
+    : nextStatus === "IN_PROGRESS"
+      ? "play"
+      : nextStatus === "COMPLETED"
+        ? "checkmark"
+        : "lock-closed";
+
+  const color = !canSwipe
+    ? "rgba(11,18,32,0.45)"
+    : nextStatus === "IN_PROGRESS"
+      ? "rgba(11,18,32,0.92)"
+      : "rgba(34,197,94,0.92)";
+
+  const forceClose = useCallback(() => {
+    try {
+      rowRef.current?.close();
+    } catch { }
+    setTimeout(() => {
+      try {
+        rowRef.current?.close();
+      } catch { }
+    }, 0);
+  }, []);
+
+  return (
+    <View style={{ marginBottom: 12 }}>
+      <ReanimatedSwipeable
+        ref={rowRef}
+        simultaneousHandlers={listRef}
+        enableTrackpadTwoFingerGesture
+        friction={1.1}
+        overshootLeft={false}
+        overshootRight={false}
+        leftThreshold={ACTION_W * 0.35}
+        rightThreshold={9999}
+        onSwipeableWillOpen={() => {
+          if (openRowRef.current && openRowRef.current !== rowRef.current) {
+            try {
+              openRowRef.current.close();
+            } catch { }
+          }
+          openRowRef.current = rowRef.current;
+        }}
+        onSwipeableWillClose={() => {
+          if (openRowRef.current === rowRef.current) openRowRef.current = null;
+        }}
+        onSwipeableOpen={(direction) => {
+          forceClose();
+
+          if (direction !== "right") return;
+          if (!canSwipe) return;
+          if (!nextStatus) return;
+
+          const prevStatus = normalizeStatus(item?.status);
+          const name = customerNameFromOrder(item);
+
+          haptic?.selection?.();
+          onToggle(item.id, nextStatus, prevStatus, name);
+        }}
+        renderLeftActions={(progress, dragX) => (
+          <ActionChip
+            side="left"
+            progress={progress}
+            dragX={dragX}
+            icon={icon}
+            label={label}
+            color={color}
+          />
+        )}
+        renderRightActions={() => null}
+        enabled={canSwipe}
+      >
+        <OrderCard
+          order={item}
+          showStatus={true}
+          onPress={() => {
+            if (openRowRef.current) return closeOpenRow();
+            onPress();
+          }}
+        />
+      </ReanimatedSwipeable>
+    </View>
+  );
 }
 
 export default function Today() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
 
-  const [status, setStatus] = useState("ALL");
+  const [status, setStatus] = useState("ACTIVE");
+
+  // Undo state
+  const [undoState, setUndoState] = useState(null);
+  const undoTimerRef = useRef(null);
+
+  const showUndo = useCallback((payload) => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+
+    setUndoState(payload);
+
+    undoTimerRef.current = setTimeout(() => {
+      setUndoState(null);
+      undoTimerRef.current = null;
+    }, 6000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    };
+  }, []);
 
   const today = useMemo(() => new Date(), []);
   const todayKey = useMemo(() => yyyyMmDd(today), [today]);
   const tomorrowKey = useMemo(() => yyyyMmDd(addDays(today, 1)), [today]);
-
   const dayTitle = useMemo(() => prettyDayTitle(today), [today]);
 
-  // IMPORTANT: query tomorrow as end boundary to avoid empty same-day ranges
-  const queryKey = ["orders", "today", todayKey, tomorrowKey, status];
+  const queryKey = ["orders", "today", todayKey, tomorrowKey];
 
   const { data, isLoading, refetch, isFetching, error } = useQuery({
     queryKey,
     queryFn: async () => {
-      const res = await fetchOrdersByRange({
-        from: todayKey,
-        to: tomorrowKey,
-        status,
-      });
+      const res = await fetchOrdersByRange({ from: todayKey, to: tomorrowKey, status: "ALL" });
       return Array.isArray(res) ? res : res?.data || [];
     },
   });
 
+  useEffect(() => {
+    const id = setInterval(() => refetch(), 60_000);
+    return () => clearInterval(id);
+  }, [refetch]);
+
   const all = data || [];
-
   const todayOrders = useMemo(() => {
-    const filtered = all.filter((o) => getOrderDayKey(o) === todayKey);
+    const filtered = all
+      .filter((o) => getOrderDayKey(o) === todayKey)
+      .filter((o) => filterForBoard(o, status));
     return filtered.sort((a, b) => getOrderSortTime(a) - getOrderSortTime(b));
-  }, [all, todayKey]);
+  }, [all, todayKey, status]);
 
-  // Full-screen pull-to-refresh:
-  // - attach RefreshControl to the FlatList
-  // - make the whole screen be the list (header becomes ListHeaderComponent)
+  const listRef = useRef(null);
+  const openRowRef = useRef(null);
+
+  const closeOpenRow = useCallback(() => {
+    if (openRowRef.current) {
+      try {
+        openRowRef.current.close();
+      } catch { }
+      openRowRef.current = null;
+    }
+  }, []);
+
+  const updateStatusMutation = useMutation({
+    mutationFn: async ({ orderId, nextStatus }) => updateOrderStatus(orderId, nextStatus),
+    onMutate: async ({ orderId, nextStatus }) => {
+      await queryClient.cancelQueries({ queryKey });
+      const prev = queryClient.getQueryData(queryKey);
+
+      queryClient.setQueryData(queryKey, (old) => {
+        const arr = Array.isArray(old) ? old : old?.data || [];
+        return arr.map((o) => (o.id === orderId ? { ...o, status: nextStatus } : o));
+      });
+
+      return { prev };
+    },
+    onError: (err, _vars, ctx) => {
+      console.log("updateOrderStatus failed:", err);
+      if (ctx?.prev) queryClient.setQueryData(queryKey, ctx.prev);
+      haptic?.light?.();
+    },
+    onSuccess: () => {
+      haptic?.success?.();
+    },
+    onSettled: () => {
+      refetch();
+    },
+  });
+
+  const onToggle = useCallback(
+    (orderId, nextStatus, prevStatus, customerName) => {
+      updateStatusMutation.mutate({ orderId, nextStatus });
+      showUndo({ orderId, prevStatus, nextStatus, customerName });
+    },
+    [updateStatusMutation, showUndo]
+  );
+
+  const undoLast = useCallback(() => {
+    if (!undoState) return;
+
+    haptic?.selection?.();
+    updateStatusMutation.mutate({ orderId: undoState.orderId, nextStatus: undoState.prevStatus });
+
+    setUndoState(null);
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+  }, [undoState, updateStatusMutation]);
+
+  // Auto-progress before pickup (no undo banner)
+  useEffect(() => {
+    if (!todayOrders.length) return;
+    if (!(status === "ACTIVE" || status === "PENDING" || status === "ALL")) return;
+
+    const nowMs = Date.now();
+    const eligible = todayOrders.filter((o) => shouldAutoProgress(o, nowMs));
+    if (!eligible.length) return;
+
+    for (const o of eligible) {
+      updateStatusMutation.mutate({ orderId: o.id, nextStatus: "IN_PROGRESS" });
+    }
+  }, [todayOrders, status, updateStatusMutation]);
+
+  // ✅ tab bar height (approx) + safe area. Keeps banner above your navbar.
+  const TAB_BAR_H = 86; // matches your contentContainerStyle paddingBottom "+ 86"
+  const bannerBottom = Math.max(insets.bottom, 10) + TAB_BAR_H + 10;
+
   return (
-    <FlatList
-      style={{ flex: 1, backgroundColor: BG }}
-      data={todayOrders}
-      keyExtractor={(item) => item.id}
-      refreshControl={
-        <RefreshControl refreshing={isFetching} onRefresh={refetch} />
-      }
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={{
-        paddingTop: Math.max(insets.top, 10),
-        paddingBottom: Math.max(insets.bottom, 12) + 86, // room for your floating tabs
-        paddingHorizontal: 14,
-      }}
-      ListHeaderComponent={
-        <View style={{ paddingBottom: 12 }}>
+    <View style={{ flex: 1, backgroundColor: BG }}>
+      <FlatList
+        ref={listRef}
+        style={{ flex: 1, backgroundColor: BG }}
+        data={todayOrders}
+        keyExtractor={(item) => item.id}
+        refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} />}
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        onScrollBeginDrag={closeOpenRow}
+        contentContainerStyle={{
+          paddingTop: Math.max(insets.top, 10),
+          paddingBottom: Math.max(insets.bottom, 12) + TAB_BAR_H, // keep list above tab bar
+          paddingHorizontal: 14,
+        }}
+        ListHeaderComponent={
+          <View style={{ paddingBottom: 12 }}>
+            <View
+              style={{
+                backgroundColor: "white",
+                borderRadius: 24,
+                padding: 14,
+                borderWidth: 1,
+                borderColor: BORDER,
+              }}
+            >
+              <Text style={{ fontSize: 22, fontWeight: "900", color: INK }}>Today</Text>
+
+              <Text style={{ marginTop: 4, color: MUTED, fontWeight: "700" }}>
+                {dayTitle} • {todayKey} • {todayOrders.length} order
+                {todayOrders.length === 1 ? "" : "s"}
+              </Text>
+
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                {FILTERS.map((f) => {
+                  const active = f === status;
+                  return (
+                    <Pressable
+                      key={f}
+                      onPress={() => {
+                        closeOpenRow();
+                        setStatus(f);
+                      }}
+                      style={({ pressed }) => ({
+                        paddingHorizontal: 12,
+                        paddingVertical: 9,
+                        borderRadius: 999,
+                        backgroundColor: active ? "rgba(229,22,54,0.12)" : "white",
+                        borderWidth: 1,
+                        borderColor: active ? "rgba(229,22,54,0.22)" : BORDER,
+                        transform: [{ scale: pressed ? 0.99 : 1 }],
+                      })}
+                    >
+                      <Text
+                        style={{
+                          color: INK,
+                          fontWeight: "900",
+                          fontSize: 12,
+                          opacity: active ? 1 : 0.75,
+                        }}
+                      >
+                        {filterLabel(f)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {error ? (
+                <View
+                  style={{
+                    marginTop: 12,
+                    padding: 12,
+                    backgroundColor: "rgba(229,22,54,0.06)",
+                    borderRadius: 16,
+                    borderWidth: 1,
+                    borderColor: "rgba(229,22,54,0.16)",
+                  }}
+                >
+                  <Text style={{ fontWeight: "900", color: INK }}>Couldn’t load orders</Text>
+                  <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
+                    {String(error.message || error)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+            <View style={{ height: 12 }} />
+          </View>
+        }
+        ListEmptyComponent={
           <View
             style={{
               backgroundColor: "white",
               borderRadius: 24,
-              padding: 14,
+              padding: 16,
               borderWidth: 1,
               borderColor: BORDER,
             }}
           >
-            <Text style={{ fontSize: 22, fontWeight: "900", color: INK }}>
-              Today
+            <Text style={{ fontWeight: "900", fontSize: 16, color: INK }}>
+              {isLoading ? "Loading..." : status === "ACTIVE" ? "No active orders" : "No orders"}
             </Text>
-
-            {/* Replace extra "Today" context with the actual weekday */}
-            <Text style={{ marginTop: 4, color: MUTED, fontWeight: "700" }}>
-              {dayTitle} • {todayKey} • {todayOrders.length} order
-              {todayOrders.length === 1 ? "" : "s"}
+            <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
+              Pull down to refresh.
             </Text>
-
-            {/* Filters */}
-            <View
-              style={{
-                flexDirection: "row",
-                gap: 8,
-                marginTop: 12,
-                flexWrap: "wrap",
-              }}
-            >
-              {FILTERS.map((f) => {
-                const active = f === status;
-                return (
-                  <Pressable
-                    key={f}
-                    onPress={() => setStatus(f)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Filter ${f}`}
-                    style={({ pressed }) => [
-                      {
-                        paddingHorizontal: 12,
-                        paddingVertical: 9,
-                        borderRadius: 999,
-                        backgroundColor: active
-                          ? "rgba(229,22,54,0.12)"
-                          : "white",
-                        borderWidth: 1,
-                        borderColor: active ? "rgba(229,22,54,0.22)" : BORDER,
-                        transform: [{ scale: pressed ? 0.99 : 1 }],
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={{
-                        color: INK,
-                        fontWeight: "900",
-                        fontSize: 12,
-                        opacity: active ? 1 : 0.75,
-                      }}
-                    >
-                      {f === "ALL" ? "All" : f.replace("_", " ")}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            {error ? (
-              <View
-                style={{
-                  marginTop: 12,
-                  padding: 12,
-                  backgroundColor: "rgba(229,22,54,0.06)",
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  borderColor: "rgba(229,22,54,0.16)",
-                }}
-              >
-                <Text style={{ fontWeight: "900", color: INK }}>
-                  Couldn’t load orders
-                </Text>
-                <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
-                  {String(error.message || error)}
-                </Text>
-              </View>
-            ) : null}
           </View>
-
-          {/* subtle spacer so first card doesn’t feel glued */}
-          <View style={{ height: 12 }} />
-        </View>
-      }
-      ListEmptyComponent={
-        <View
-          style={{
-            backgroundColor: "white",
-            borderRadius: 24,
-            padding: 16,
-            borderWidth: 1,
-            borderColor: BORDER,
-          }}
-        >
-          <Text style={{ fontWeight: "900", fontSize: 16, color: INK }}>
-            {isLoading ? "Loading..." : "No orders for today"}
-          </Text>
-          <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
-            Pull down to refresh.
-          </Text>
-        </View>
-      }
-      renderItem={({ item }) => (
-        <View style={{ marginBottom: 12 }}>
-          <OrderCard
-            order={item}
-            showStatus={false}
+        }
+        renderItem={({ item }) => (
+          <SwipeRow
+            item={item}
+            listRef={listRef}
+            openRowRef={openRowRef}
+            closeOpenRow={closeOpenRow}
+            onToggle={onToggle}
             onPress={() => router.push(`/order/${item.id}`)}
           />
-        </View>
-      )}
-    />
+        )}
+      />
+
+      <UndoBanner
+        visible={!!undoState}
+        text={
+          undoState
+            ? `Moved ${undoState.customerName} to ${humanStatus(undoState.nextStatus)}`
+            : ""
+        }
+        onAction={undoLast}
+        onDismiss={() => setUndoState(null)}
+        bottomOffset={bannerBottom} // ✅ above the tab bar
+      />
+    </View>
   );
 }
