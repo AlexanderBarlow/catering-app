@@ -14,6 +14,8 @@ import { fetchOrdersByRange } from "../../src/api/orders";
 import { weekDays, yyyyMmDd, pretty } from "../../src/utils/dates";
 import OrderCard from "../../src/components/OrderCard";
 
+import TopHeader from "../../src/components/TopHeader";
+
 const CFA_RED = "#E51636";
 const BG = "#FFF6F2";
 const INK = "#0B1220";
@@ -22,10 +24,13 @@ const BORDER = "rgba(11,18,32,0.10)";
 
 function yyyyMmDdLocalFromRaw(raw) {
   if (!raw) return null;
-  const s = String(raw);
-  const match = s.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (match?.[1]) return match[1];
 
+  const s = String(raw);
+
+  // ✅ ONLY treat as date-only when it's exactly YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // For ISO timestamps (with T / Z / offsets), compute LOCAL yyyy-mm-dd
   const d = new Date(raw);
   if (!Number.isFinite(d.getTime())) return null;
 
@@ -38,20 +43,24 @@ function yyyyMmDdLocalFromRaw(raw) {
 function getOrderDayKey(order) {
   const raw =
     order.eventDate ||
+    order.pickupTime || // ✅ match Today page priority
     order.pickupAt ||
     order.scheduledFor ||
     order.readyAt ||
     order.createdAt;
+
   return yyyyMmDdLocalFromRaw(raw);
 }
 
 function getOrderSortTime(order) {
   const raw =
+    order.pickupTime || // ✅ match Today page priority
     order.pickupAt ||
     order.scheduledFor ||
     order.readyAt ||
     order.createdAt ||
     order.eventDate;
+
   if (!raw) return 0;
 
   const s = String(raw);
@@ -68,8 +77,8 @@ function sumItems(order) {
   const items = Array.isArray(order.items)
     ? order.items
     : Array.isArray(order.lineItems)
-    ? order.lineItems
-    : [];
+      ? order.lineItems
+      : [];
 
   let total = 0;
   for (const it of items)
@@ -87,7 +96,6 @@ function formatRange(from, to) {
   return `${left} – ${right}`;
 }
 
-/** Modern, compact, “calendar-like” day tile */
 function DayTile({ label, count, active, onPress }) {
   return (
     <Pressable
@@ -107,10 +115,7 @@ function DayTile({ label, count, active, onPress }) {
         },
       ]}
     >
-      <Text
-        style={{ fontWeight: "900", color: INK, fontSize: 12 }}
-        numberOfLines={1}
-      >
+      <Text style={{ fontWeight: "900", color: INK, fontSize: 12 }} numberOfLines={1}>
         {label}
       </Text>
 
@@ -184,7 +189,7 @@ export default function Week() {
       if (k && map.has(k)) map.get(k).push(o);
     }
 
-    for (const [k, arr] of map.entries()) {
+    for (const [_k, arr] of map.entries()) {
       arr.sort((a, b) => getOrderSortTime(a) - getOrderSortTime(b));
     }
 
@@ -209,19 +214,17 @@ export default function Week() {
     for (const o of selectedOrders) itemsTotal += sumItems(o);
 
     if (count === 0) return "No orders";
-    return `${count} order${count === 1 ? "" : "s"} • ${itemsTotal} item${
-      itemsTotal === 1 ? "" : "s"
-    }`;
+    return `${count} order${count === 1 ? "" : "s"} • ${itemsTotal} item${itemsTotal === 1 ? "" : "s"}`;
   }, [selectedOrders]);
 
   const selectedLabel = useMemo(() => {
     const d = new Date(selectedKey + "T12:00:00");
     return Number.isFinite(d.getTime())
       ? d.toLocaleDateString([], {
-          weekday: "long",
-          month: "short",
-          day: "numeric",
-        })
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+      })
       : selectedKey;
   }, [selectedKey]);
 
@@ -235,75 +238,33 @@ export default function Week() {
     [dayKeys, selectedKey]
   );
 
+  const subtitle = useMemo(() => {
+    const range = formatRange(from, to);
+    const total = all.length;
+    return `${range} • ${total} order${total === 1 ? "" : "s"}`;
+  }, [from, to, all.length]);
+
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: BG }}
-      contentContainerStyle={{
-        paddingTop: Math.max(insets.top, 8), // less top padding
-        paddingBottom: Math.max(insets.bottom, 12) + 90, // space for floating tabs
-      }}
-      refreshControl={
-        <RefreshControl refreshing={isFetching} onRefresh={refetch} />
-      }
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Top header */}
-      <View style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
-        <View
-          style={{
-            backgroundColor: "white",
-            borderRadius: 22,
-            padding: 12, // tighter
-            borderWidth: 1,
-            borderColor: BORDER,
-          }}
-        >
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-            }}
-          >
-            <View style={{ flex: 1 }}>
-              {/* Removed "Week" text */}
-              <Text style={{ color: MUTED, fontWeight: "800", fontSize: 13 }}>
-                {formatRange(from, to)}
-              </Text>
-            </View>
+    <View style={{ flex: 1, backgroundColor: BG }}>
+      <TopHeader title="Week" subtitle={subtitle} />
 
-            <Pressable
-              onPress={() => refetch()}
-              accessibilityRole="button"
-              accessibilityLabel="Refresh week"
-              style={({ pressed }) => [
-                {
-                  paddingHorizontal: 12,
-                  paddingVertical: 9, // slightly smaller
-                  borderRadius: 999,
-                  backgroundColor: pressed
-                    ? "rgba(229,22,54,0.14)"
-                    : "rgba(229,22,54,0.10)",
-                  borderWidth: 1,
-                  borderColor: "rgba(229,22,54,0.18)",
-                  transform: [{ scale: pressed ? 0.985 : 1 }],
-                },
-              ]}
-            >
-              <Text style={{ color: CFA_RED, fontWeight: "900", fontSize: 12 }}>
-                Refresh
-              </Text>
-            </Pressable>
-          </View>
-
+      <ScrollView
+        style={{ flex: 1, backgroundColor: BG }}
+        contentContainerStyle={{
+          paddingTop: 6,
+          paddingBottom: Math.max(insets.bottom, 12) + 90,
+        }}
+        refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} />}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
+          {/* ✅ keep error banner (no refresh section) */}
           {error ? (
             <View
               style={{
-                marginTop: 10,
+                backgroundColor: "white",
+                borderRadius: 22,
                 padding: 12,
-                backgroundColor: "rgba(229,22,54,0.06)",
-                borderRadius: 16,
                 borderWidth: 1,
                 borderColor: "rgba(229,22,54,0.16)",
               }}
@@ -316,144 +277,131 @@ export default function Week() {
               </Text>
             </View>
           ) : null}
-        </View>
 
-        {/* Day chooser (horizontal stays) */}
-        <View style={{ marginTop: 10 }}>
-          <FlatList
-            horizontal
-            data={days}
-            keyExtractor={(d) => yyyyMmDd(d)}
-            showsHorizontalScrollIndicator={false}
-            ItemSeparatorComponent={() => <View style={{ width: 10 }} />}
-            renderItem={({ item }) => {
-              const key = yyyyMmDd(item);
-              return (
-                <DayTile
-                  label={pretty(item)}
-                  count={counts.get(key) || 0}
-                  active={key === selectedKey}
-                  onPress={() => setSelectedKey(key)}
-                />
-              );
-            }}
-          />
-        </View>
-
-        {/* Selected-day summary bar */}
-        <View
-          style={{
-            marginTop: 10,
-            backgroundColor: "white",
-            borderRadius: 20,
-            padding: 12,
-            borderWidth: 1,
-            borderColor: BORDER,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 10,
-          }}
-        >
-          <Pressable
-            onPress={() => jump(-1)}
-            accessibilityRole="button"
-            accessibilityLabel="Previous day"
-            style={({ pressed }) => [
-              {
-                width: 40,
-                height: 40,
-                borderRadius: 14,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: pressed
-                  ? "rgba(11,18,32,0.06)"
-                  : "rgba(11,18,32,0.04)",
-                borderWidth: 1,
-                borderColor: "rgba(11,18,32,0.08)",
-                opacity: dayKeys.indexOf(selectedKey) === 0 ? 0.45 : 1,
-              },
-            ]}
-            disabled={dayKeys.indexOf(selectedKey) === 0}
-          >
-            <Text style={{ fontWeight: "900", color: INK, fontSize: 16 }}>
-              ‹
-            </Text>
-          </Pressable>
-
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontWeight: "900", color: INK }} numberOfLines={1}>
-              {selectedLabel}
-            </Text>
-            <Text
-              style={{ marginTop: 4, color: MUTED, fontWeight: "700" }}
-              numberOfLines={1}
-            >
-              {selectedSummary}
-            </Text>
+          {/* Day chooser */}
+          <View style={{ marginTop: error ? 10 : 0 }}>
+            <FlatList
+              horizontal
+              data={days}
+              keyExtractor={(d) => yyyyMmDd(d)}
+              showsHorizontalScrollIndicator={false}
+              ItemSeparatorComponent={() => <View style={{ width: 10 }} />}
+              renderItem={({ item }) => {
+                const key = yyyyMmDd(item);
+                return (
+                  <DayTile
+                    label={pretty(item)}
+                    count={counts.get(key) || 0}
+                    active={key === selectedKey}
+                    onPress={() => setSelectedKey(key)}
+                  />
+                );
+              }}
+            />
           </View>
 
-          <Pressable
-            onPress={() => jump(1)}
-            accessibilityRole="button"
-            accessibilityLabel="Next day"
-            style={({ pressed }) => [
-              {
-                width: 40,
-                height: 40,
-                borderRadius: 14,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: pressed
-                  ? "rgba(11,18,32,0.06)"
-                  : "rgba(11,18,32,0.04)",
-                borderWidth: 1,
-                borderColor: "rgba(11,18,32,0.08)",
-                opacity:
-                  dayKeys.indexOf(selectedKey) === dayKeys.length - 1
-                    ? 0.45
-                    : 1,
-              },
-            ]}
-            disabled={dayKeys.indexOf(selectedKey) === dayKeys.length - 1}
-          >
-            <Text style={{ fontWeight: "900", color: INK, fontSize: 16 }}>
-              ›
-            </Text>
-          </Pressable>
-        </View>
-      </View>
-
-      {/* Orders for selected day (no list scrolling; page scrolls) */}
-      <View style={{ paddingHorizontal: 14 }}>
-        {selectedOrders.length === 0 ? (
+          {/* Selected-day summary bar */}
           <View
             style={{
+              marginTop: 10,
               backgroundColor: "white",
-              borderRadius: 24,
-              padding: 16,
+              borderRadius: 20,
+              padding: 12,
               borderWidth: 1,
               borderColor: BORDER,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
             }}
           >
-            <Text style={{ fontWeight: "900", fontSize: 16, color: INK }}>
-              No orders today
-            </Text>
-            <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
-              Select another day above to see its orders.
-            </Text>
-          </View>
-        ) : (
-          selectedOrders.map((item) => (
-            <View key={item.id} style={{ marginBottom: 12 }}>
-              <OrderCard
-                order={item}
-                onPress={() => router.push(`/order/${item.id}`)}
-              />
+            <Pressable
+              onPress={() => jump(-1)}
+              accessibilityRole="button"
+              accessibilityLabel="Previous day"
+              style={({ pressed }) => [
+                {
+                  width: 40,
+                  height: 40,
+                  borderRadius: 14,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: pressed
+                    ? "rgba(11,18,32,0.06)"
+                    : "rgba(11,18,32,0.04)",
+                  borderWidth: 1,
+                  borderColor: "rgba(11,18,32,0.08)",
+                  opacity: dayKeys.indexOf(selectedKey) === 0 ? 0.45 : 1,
+                },
+              ]}
+              disabled={dayKeys.indexOf(selectedKey) === 0}
+            >
+              <Text style={{ fontWeight: "900", color: INK, fontSize: 16 }}>‹</Text>
+            </Pressable>
+
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: "900", color: INK }} numberOfLines={1}>
+                {selectedLabel}
+              </Text>
+              <Text style={{ marginTop: 4, color: MUTED, fontWeight: "700" }} numberOfLines={1}>
+                {selectedSummary}
+              </Text>
             </View>
-          ))
-        )}
-      </View>
-    </ScrollView>
+
+            <Pressable
+              onPress={() => jump(1)}
+              accessibilityRole="button"
+              accessibilityLabel="Next day"
+              style={({ pressed }) => [
+                {
+                  width: 40,
+                  height: 40,
+                  borderRadius: 14,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: pressed
+                    ? "rgba(11,18,32,0.06)"
+                    : "rgba(11,18,32,0.04)",
+                  borderWidth: 1,
+                  borderColor: "rgba(11,18,32,0.08)",
+                  opacity: dayKeys.indexOf(selectedKey) === dayKeys.length - 1 ? 0.45 : 1,
+                },
+              ]}
+              disabled={dayKeys.indexOf(selectedKey) === dayKeys.length - 1}
+            >
+              <Text style={{ fontWeight: "900", color: INK, fontSize: 16 }}>›</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Orders for selected day */}
+        <View style={{ paddingHorizontal: 14 }}>
+          {selectedOrders.length === 0 ? (
+            <View
+              style={{
+                backgroundColor: "white",
+                borderRadius: 24,
+                padding: 16,
+                borderWidth: 1,
+                borderColor: BORDER,
+              }}
+            >
+              <Text style={{ fontWeight: "900", fontSize: 16, color: INK }}>
+                No orders
+              </Text>
+              <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
+                Select another day above to see its orders.
+              </Text>
+            </View>
+          ) : (
+            selectedOrders.map((item) => (
+              <View key={item.id} style={{ marginBottom: 12 }}>
+                <OrderCard order={item} onPress={() => router.push(`/order/${item.id}`)} />
+              </View>
+            ))
+          )}
+        </View>
+      </ScrollView>
+    </View>
   );
 }

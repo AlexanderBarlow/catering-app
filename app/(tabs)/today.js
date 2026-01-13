@@ -19,6 +19,9 @@ import { yyyyMmDd } from "../../src/utils/dates";
 import OrderCard from "../../src/components/OrderCard";
 import { haptic } from "../../src/utils/haptics";
 
+// ✅ your new header (adjust path/name if different)
+import TopHeader from "../../src/components/TopHeader";
+
 const BG = "#FFF6F2";
 const INK = "#0B1220";
 const MUTED = "rgba(11,18,32,0.62)";
@@ -51,7 +54,7 @@ function yyyyMmDdLocalFromRaw(raw) {
 function getOrderDayKey(order) {
   const raw =
     order.eventDate ||
-    order.pickupTime || // prefer schema field
+    order.pickupTime ||
     order.pickupAt ||
     order.scheduledFor ||
     order.readyAt ||
@@ -60,7 +63,7 @@ function getOrderDayKey(order) {
 }
 function getOrderSortTime(order) {
   const raw =
-    order.pickupTime || // prefer schema field
+    order.pickupTime ||
     order.pickupAt ||
     order.scheduledFor ||
     order.readyAt ||
@@ -152,12 +155,9 @@ function UndoBanner({ visible, text, onAction, onDismiss, bottomOffset = 0 }) {
         style={{
           borderRadius: 22,
           overflow: "hidden",
-
-          // elegant glassy card
           backgroundColor: "rgba(255,255,255,0.92)",
           borderWidth: 1,
           borderColor: "rgba(11,18,32,0.10)",
-
           shadowColor: "#000",
           shadowOpacity: 0.12,
           shadowRadius: 18,
@@ -165,13 +165,7 @@ function UndoBanner({ visible, text, onAction, onDismiss, bottomOffset = 0 }) {
           elevation: 18,
         }}
       >
-        {/* subtle top accent */}
-        <View
-          style={{
-            height: 4,
-            backgroundColor: "rgba(229,22,54,0.60)",
-          }}
-        />
+        <View style={{ height: 4, backgroundColor: "rgba(229,22,54,0.60)" }} />
 
         <View
           style={{
@@ -182,7 +176,6 @@ function UndoBanner({ visible, text, onAction, onDismiss, bottomOffset = 0 }) {
             gap: 12,
           }}
         >
-          {/* icon bubble */}
           <View
             style={{
               width: 34,
@@ -262,9 +255,7 @@ function ActionChip({ side, progress, dragX, icon, label, color }) {
       opacity: interpolate(p, [0, 1], [0.15, 1], Extrapolate.CLAMP),
       transform: [
         { translateX: withSpring(slide, SPRING) },
-        {
-          scale: withSpring(interpolate(p, [0, 1], [0.98, 1], Extrapolate.CLAMP), SPRING),
-        },
+        { scale: withSpring(interpolate(p, [0, 1], [0.98, 1], Extrapolate.CLAMP), SPRING) },
       ],
     };
   });
@@ -331,14 +322,8 @@ function SwipeRow({ item, listRef, openRowRef, closeOpenRow, onToggle, onPress }
       : "rgba(34,197,94,0.92)";
 
   const forceClose = useCallback(() => {
-    try {
-      rowRef.current?.close();
-    } catch { }
-    setTimeout(() => {
-      try {
-        rowRef.current?.close();
-      } catch { }
-    }, 0);
+    try { rowRef.current?.close(); } catch { }
+    setTimeout(() => { try { rowRef.current?.close(); } catch { } }, 0);
   }, []);
 
   return (
@@ -354,9 +339,7 @@ function SwipeRow({ item, listRef, openRowRef, closeOpenRow, onToggle, onPress }
         rightThreshold={9999}
         onSwipeableWillOpen={() => {
           if (openRowRef.current && openRowRef.current !== rowRef.current) {
-            try {
-              openRowRef.current.close();
-            } catch { }
+            try { openRowRef.current.close(); } catch { }
           }
           openRowRef.current = rowRef.current;
         }}
@@ -365,7 +348,6 @@ function SwipeRow({ item, listRef, openRowRef, closeOpenRow, onToggle, onPress }
         }}
         onSwipeableOpen={(direction) => {
           forceClose();
-
           if (direction !== "right") return;
           if (!canSwipe) return;
           if (!nextStatus) return;
@@ -377,14 +359,7 @@ function SwipeRow({ item, listRef, openRowRef, closeOpenRow, onToggle, onPress }
           onToggle(item.id, nextStatus, prevStatus, name);
         }}
         renderLeftActions={(progress, dragX) => (
-          <ActionChip
-            side="left"
-            progress={progress}
-            dragX={dragX}
-            icon={icon}
-            label={label}
-            color={color}
-          />
+          <ActionChip side="left" progress={progress} dragX={dragX} icon={icon} label={label} color={color} />
         )}
         renderRightActions={() => null}
         enabled={canSwipe}
@@ -415,9 +390,7 @@ export default function Today() {
 
   const showUndo = useCallback((payload) => {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-
     setUndoState(payload);
-
     undoTimerRef.current = setTimeout(() => {
       setUndoState(null);
       undoTimerRef.current = null;
@@ -463,9 +436,7 @@ export default function Today() {
 
   const closeOpenRow = useCallback(() => {
     if (openRowRef.current) {
-      try {
-        openRowRef.current.close();
-      } catch { }
+      try { openRowRef.current.close(); } catch { }
       openRowRef.current = null;
     }
   }, []);
@@ -506,7 +477,6 @@ export default function Today() {
 
   const undoLast = useCallback(() => {
     if (!undoState) return;
-
     haptic?.selection?.();
     updateStatusMutation.mutate({ orderId: undoState.orderId, nextStatus: undoState.prevStatus });
 
@@ -531,12 +501,16 @@ export default function Today() {
     }
   }, [todayOrders, status, updateStatusMutation]);
 
-  // ✅ tab bar height (approx) + safe area. Keeps banner above your navbar.
-  const TAB_BAR_H = 86; // matches your contentContainerStyle paddingBottom "+ 86"
+  const TAB_BAR_H = 86;
   const bannerBottom = Math.max(insets.bottom, 10) + TAB_BAR_H + 10;
+
+  const subtitle = `${dayTitle} • ${todayKey} • ${todayOrders.length} order${todayOrders.length === 1 ? "" : "s"}`;
 
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
+      {/* ✅ New clean header */}
+      <TopHeader title="Today" subtitle={subtitle} />
+
       <FlatList
         ref={listRef}
         style={{ flex: 1, backgroundColor: BG }}
@@ -547,12 +521,13 @@ export default function Today() {
         scrollEventThrottle={16}
         onScrollBeginDrag={closeOpenRow}
         contentContainerStyle={{
-          paddingTop: Math.max(insets.top, 10),
-          paddingBottom: Math.max(insets.bottom, 12) + TAB_BAR_H, // keep list above tab bar
+          paddingTop: 6, // header is outside now
+          paddingBottom: Math.max(insets.bottom, 12) + TAB_BAR_H,
           paddingHorizontal: 14,
         }}
         ListHeaderComponent={
           <View style={{ paddingBottom: 12 }}>
+            {/* ✅ Controls card (filters + error) */}
             <View
               style={{
                 backgroundColor: "white",
@@ -562,14 +537,7 @@ export default function Today() {
                 borderColor: BORDER,
               }}
             >
-              <Text style={{ fontSize: 22, fontWeight: "900", color: INK }}>Today</Text>
-
-              <Text style={{ marginTop: 4, color: MUTED, fontWeight: "700" }}>
-                {dayTitle} • {todayKey} • {todayOrders.length} order
-                {todayOrders.length === 1 ? "" : "s"}
-              </Text>
-
-              <View style={{ flexDirection: "row", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+              <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
                 {FILTERS.map((f) => {
                   const active = f === status;
                   return (
@@ -622,6 +590,7 @@ export default function Today() {
                 </View>
               ) : null}
             </View>
+
             <View style={{ height: 12 }} />
           </View>
         }
@@ -657,14 +626,10 @@ export default function Today() {
 
       <UndoBanner
         visible={!!undoState}
-        text={
-          undoState
-            ? `Moved ${undoState.customerName} to ${humanStatus(undoState.nextStatus)}`
-            : ""
-        }
+        text={undoState ? `Moved ${undoState.customerName} to ${humanStatus(undoState.nextStatus)}` : ""}
         onAction={undoLast}
         onDismiss={() => setUndoState(null)}
-        bottomOffset={bannerBottom} // ✅ above the tab bar
+        bottomOffset={bannerBottom}
       />
     </View>
   );

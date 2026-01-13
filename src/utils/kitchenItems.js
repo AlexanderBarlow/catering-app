@@ -32,6 +32,7 @@ const EXCLUDE_KEYWORDS = [
 
 // High priority (kitchen-first)
 // NOTE: We rank HOT trays above other trays, but cold nugget trays / salad trays / wrap trays are STILL priority.
+// High priority (kitchen-first)
 const PRIORITY_RULES = [
     // Sandwiches (broad catch)
     { key: "SANDWICH", includeAny: ["sandwich"] },
@@ -46,9 +47,13 @@ const PRIORITY_RULES = [
     { key: "SALAD_TRAY", includeAll: ["tray"], includeAny: ["salad", "cobb", "southwest", "market"] },
     { key: "WRAP_TRAY", includeAll: ["tray"], includeAny: ["wrap"] },
 
+    // ✅ NEW: any tray is priority (fallback)
+    { key: "TRAY", includeAll: ["tray"] },
+
     // Bundles
     { key: "GRILLED_BUNDLE", includeAll: ["grilled", "bundle"] },
 ];
+
 
 // Helpers
 function norm(s) {
@@ -118,8 +123,12 @@ export function pickKitchenPriorityItems(items) {
         SALAD_TRAY: 6,
         WRAP_TRAY: 7,
 
-        GRILLED_BUNDLE: 8,
+        // ✅ fallback tray priority
+        TRAY: 8,
+
+        GRILLED_BUNDLE: 9,
     };
+
 
     priority.sort((a, b) => (rank[a.key] || 99) - (rank[b.key] || 99));
 
@@ -145,6 +154,8 @@ export function priorityLabel(key) {
             return "Wrap Tray";
         case "GRILLED_BUNDLE":
             return "Grilled Bundle";
+        case "TRAY":
+            return "Tray";
         default:
             return "Priority";
     }

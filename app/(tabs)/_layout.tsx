@@ -13,8 +13,6 @@ import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-gesture-handler";
-import ServiceStatusPill from "../../src/components/ServiceStatusPill";
-
 
 import { haptic } from "../../src/utils/haptics";
 
@@ -273,7 +271,6 @@ function IOS26LiquidTabBar(props) {
 export default function TabsLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ServiceStatusPill top={14} right={18} intervalMs={30000} />
       <Tabs
         tabBar={(props) => <IOS26LiquidTabBar {...props} />}
         screenOptions={{
