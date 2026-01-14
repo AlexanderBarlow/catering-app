@@ -4,7 +4,7 @@
     "slug": "catering-app",
     "scheme": "cateringops",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/images/app.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,

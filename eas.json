@@ -12,13 +12,10 @@
       "distribution": "internal"
     },
     "production": {
-      "distribution": "store",
       "autoIncrement": true
     }
   },
   "submit": {
-    "production": {
-      "ascAppId": "6757709868"
-    }
+    "production": {}
   }
 }
