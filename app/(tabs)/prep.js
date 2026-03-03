@@ -1,22 +1,16 @@
 // app/(tabs)/prep.js
-import React, { useEffect, useMemo, useState, useCallback } from "react";
-import {
-    View,
-    Text,
-    FlatList,
-    RefreshControl,
-    Pressable,
-} from "react-native";
+import React, { useMemo, useState, useCallback } from "react";
+import { View, Text, FlatList, RefreshControl, Pressable } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
 import { fetchOrdersByRange } from "../../src/api/orders";
-import { yyyyMmDd } from "../../src/utils/dates";
-import {
-    pickKitchenPriorityItems,
-    priorityLabel,
-} from "../../src/utils/kitchenItems";
+
+// ✅ use timezone-safe keying (update your dates helper accordingly)
+import { yyyyMmDd, yyyyMmDdKey } from "../../src/utils/dates";
+
+import { pickKitchenPriorityItems, priorityLabel } from "../../src/utils/kitchenItems";
 
 const CFA_RED = "#E51636";
 const BG = "#FFF6F2";
@@ -31,38 +25,18 @@ function addDays(date, days) {
     return d;
 }
 
-function formatDate(dateStr) {
-    const d = new Date(dateStr + "T12:00:00");
-    if (!Number.isFinite(d.getTime())) return dateStr;
-    return d.toLocaleDateString([], {
-        weekday: "long",
-        month: "short",
-        day: "numeric",
-    });
+function formatDate(yyyyMmDdStr) {
+    // Keep this “midday” trick to avoid UTC parsing issues for date-only strings.
+    const d = new Date(`${yyyyMmDdStr}T12:00:00`);
+    if (!Number.isFinite(d.getTime())) return yyyyMmDdStr;
+    return d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
 }
 
 function normKey(s) {
     return String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function yyyyMmDdLocalFromRaw(raw) {
-    if (!raw) return null;
-    const s = String(raw);
-
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-    const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
-    if (m?.[1]) return m[1];
-
-    const d = new Date(raw);
-    if (!Number.isFinite(d.getTime())) return null;
-
-    const y = d.getFullYear();
-    const mo = String(d.getMonth() + 1).padStart(2, "0");
-    const da = String(d.getDate()).padStart(2, "0");
-    return `${y}-${mo}-${da}`;
-}
-
+// ✅ One consistent order day key (store-local / tz-safe)
 function getOrderDayKey(order) {
     const raw =
         order.eventDate ||
@@ -72,11 +46,10 @@ function getOrderDayKey(order) {
         order.readyAt ||
         order.createdAt;
 
-    return yyyyMmDdLocalFromRaw(raw);
+    return yyyyMmDdKey(raw); // returns "YYYY-MM-DD" in your store tz
 }
 
 function scheduledDate(order) {
-    // Prefer explicit scheduled times
     const raw =
         order.pickupTime ||
         order.pickupAt ||
@@ -92,12 +65,10 @@ function scheduledDate(order) {
 function serviceType(order) {
     const t = String(order?.serviceType || order?.fulfillmentType || "").toLowerCase();
     const subj = String(order?.subject || "").toLowerCase();
+    const txt = `${t} ${subj}`;
 
-    if (t.includes("deliver")) return "Delivery";
-    if (t.includes("pickup")) return "Pickup";
-
-    // fallback heuristics
-    if (subj.includes("deliver")) return "Delivery";
+    if (txt.includes("deliver")) return "Delivery";
+    if (txt.includes("pickup")) return "Pickup";
     return "Pickup";
 }
 
@@ -113,11 +84,10 @@ function timeBucketForOrder(order) {
     if (!d) return "UNSCHEDULED";
     const h = d.getHours();
 
-    // Removed "LATE" per request
     if (h >= 5 && h < 11) return "MORNING";
     if (h >= 11 && h < 14) return "LUNCH";
     if (h >= 14 && h < 17) return "AFTERNOON";
-    return "DINNER"; // everything after 5pm goes here (including late night)
+    return "DINNER";
 }
 
 const BUCKET_META = [
@@ -139,16 +109,16 @@ function aggregateItemsFromOrders(orders) {
                 : [];
 
         for (const it of items) {
-            const rawName =
-                it.name || it.title || it.itemName || it.productName || "Unnamed Item";
+            const rawName = it.name || it.title || it.itemName || it.productName || "Unnamed Item";
             const name = String(rawName || "").trim();
             if (!name) continue;
 
             const qty = Number(it.qty ?? it.quantity ?? it.count ?? 1) || 1;
-
             const key = normKey(name);
+
             const cur = map.get(key);
             map.set(key, {
+                key, // ✅ keep stable key on each aggregated item
                 name: cur?.name || name,
                 qty: (cur?.qty || 0) + qty,
             });
@@ -159,23 +129,19 @@ function aggregateItemsFromOrders(orders) {
 }
 
 function sortPrepItems(items) {
-    const { priority, others } = pickKitchenPriorityItems(items); // sauces removed here
+    const { priority, others } = pickKitchenPriorityItems(items);
 
-    const prioritySorted = [...priority].sort((a, b) => {
+    const byQtyThenName = (a, b) => {
         const aq = Number(a.qty || 0);
         const bq = Number(b.qty || 0);
         if (bq !== aq) return bq - aq;
         return String(a.name).localeCompare(String(b.name));
-    });
+    };
 
-    const othersSorted = [...others].sort((a, b) => {
-        const aq = Number(a.qty || 0);
-        const bq = Number(b.qty || 0);
-        if (bq !== aq) return bq - aq;
-        return String(a.name).localeCompare(String(b.name));
-    });
-
-    return { prioritySorted, othersSorted };
+    return {
+        prioritySorted: [...priority].sort(byQtyThenName),
+        othersSorted: [...others].sort(byQtyThenName),
+    };
 }
 
 function sumQty(list) {
@@ -211,13 +177,7 @@ function ChipToggle({ leftLabel, rightLabel, value, onChange }) {
                     transform: [{ scale: pressed ? 0.99 : 1 }],
                 })}
             >
-                <Text
-                    style={{
-                        fontWeight: "950",
-                        fontSize: 12,
-                        color: leftActive ? INK : "rgba(11,18,32,0.55)",
-                    }}
-                >
+                <Text style={{ fontWeight: "950", fontSize: 12, color: leftActive ? INK : "rgba(11,18,32,0.55)" }}>
                     {leftLabel}
                 </Text>
             </Pressable>
@@ -235,13 +195,7 @@ function ChipToggle({ leftLabel, rightLabel, value, onChange }) {
                     transform: [{ scale: pressed ? 0.99 : 1 }],
                 })}
             >
-                <Text
-                    style={{
-                        fontWeight: "950",
-                        fontSize: 12,
-                        color: !leftActive ? INK : "rgba(11,18,32,0.55)",
-                    }}
-                >
+                <Text style={{ fontWeight: "950", fontSize: 12, color: !leftActive ? INK : "rgba(11,18,32,0.55)" }}>
                     {rightLabel}
                 </Text>
             </Pressable>
@@ -283,14 +237,7 @@ function PriorityTag({ label }) {
                 marginTop: 10,
             }}
         >
-            <Text
-                style={{
-                    fontSize: 11,
-                    fontWeight: "950",
-                    color: CFA_RED,
-                    letterSpacing: 0.2,
-                }}
-            >
+            <Text style={{ fontSize: 11, fontWeight: "950", color: CFA_RED, letterSpacing: 0.2 }}>
                 {label.toUpperCase()}
             </Text>
         </View>
@@ -320,9 +267,7 @@ function BucketTimesPills({ orders }) {
                         borderColor: "rgba(11,18,32,0.08)",
                     }}
                 >
-                    <Text style={{ color: "rgba(11,18,32,0.70)", fontWeight: "900", fontSize: 12 }}>
-                        {t.label}
-                    </Text>
+                    <Text style={{ color: "rgba(11,18,32,0.70)", fontWeight: "900", fontSize: 12 }}>{t.label}</Text>
                 </View>
             ))}
 
@@ -337,9 +282,7 @@ function BucketTimesPills({ orders }) {
                         borderColor: "rgba(11,18,32,0.08)",
                     }}
                 >
-                    <Text style={{ color: "rgba(11,18,32,0.70)", fontWeight: "900", fontSize: 12 }}>
-                        +{times.length - 10} more
-                    </Text>
+                    <Text style={{ color: "rgba(11,18,32,0.70)", fontWeight: "900", fontSize: 12 }}>+{times.length - 10} more</Text>
                 </View>
             ) : null}
         </View>
@@ -366,11 +309,7 @@ export default function Prep() {
     const { data, refetch, isFetching, isLoading, error } = useQuery({
         queryKey: ["orders", "prep", todayStr, tomorrowStr],
         queryFn: async () => {
-            const res = await fetchOrdersByRange({
-                from: todayStr,
-                to: tomorrowStr,
-                status: "ALL",
-            });
+            const res = await fetchOrdersByRange({ from: todayStr, to: tomorrowStr, status: "ALL" });
             return Array.isArray(res) ? res : res?.data || [];
         },
         staleTime: 0,
@@ -381,9 +320,7 @@ export default function Prep() {
 
     const all = data || [];
 
-    const todaysOrders = useMemo(() => {
-        return all.filter((o) => getOrderDayKey(o) === todayStr);
-    }, [all, todayStr]);
+    const todaysOrders = useMemo(() => all.filter((o) => getOrderDayKey(o) === todayStr), [all, todayStr]);
 
     const dailyPrep = useMemo(() => {
         const aggregated = aggregateItemsFromOrders(todaysOrders);
@@ -403,28 +340,18 @@ export default function Prep() {
             bucketOrdersMap.get(k).push(o);
         }
 
-        // sort by scheduled time
         for (const [k, arr] of bucketOrdersMap.entries()) {
-            arr.sort((a, b) => {
-                const ta = scheduledDate(a)?.getTime() ?? 9e15;
-                const tb = scheduledDate(b)?.getTime() ?? 9e15;
-                return ta - tb;
-            });
+            arr.sort((a, b) => (scheduledDate(a)?.getTime() ?? 9e15) - (scheduledDate(b)?.getTime() ?? 9e15));
             bucketOrdersMap.set(k, arr);
         }
 
-        const buckets = BUCKET_META.map((meta) => {
+        return BUCKET_META.map((meta) => {
             const orders = bucketOrdersMap.get(meta.key) || [];
             const aggregated = aggregateItemsFromOrders(orders);
             const { prioritySorted, othersSorted } = sortPrepItems(aggregated);
 
             const totalItems = sumQty(prioritySorted) + sumQty(othersSorted);
             const priorityItems = sumQty(prioritySorted);
-
-            const merged = [
-                ...prioritySorted.map((x) => ({ ...x, _p: true, _k: x.key })),
-                ...othersSorted.map((x) => ({ ...x, _p: false, _k: null })),
-            ];
 
             return {
                 ...meta,
@@ -433,55 +360,70 @@ export default function Prep() {
                 priorityItems,
                 itemsPriority: prioritySorted,
                 itemsOther: othersSorted,
-                preview: merged.slice(0, 4),
+                preview: [
+                    ...prioritySorted.slice(0, 4).map((x) => ({ ...x, _p: true })),
+                    ...othersSorted.slice(0, Math.max(0, 4 - Math.min(4, prioritySorted.length))).map((x) => ({ ...x, _p: false })),
+                ].slice(0, 4),
             };
         });
-
-        return buckets;
     }, [todaysOrders]);
+
+    // ✅ auto-open a useful bucket when data loads
+    React.useEffect(() => {
+        if (mode !== "TIMELINE") return;
+        if (!timelineBuckets?.length) return;
+
+        const firstNonEmpty = timelineBuckets.find((b) => b.totalItems > 0) || timelineBuckets.find((b) => b.key === "LUNCH");
+        if (!firstNonEmpty) return;
+
+        setExpanded((prev) => {
+            if (prev.has(firstNonEmpty.key)) return prev;
+            return new Set([firstNonEmpty.key]);
+        });
+    }, [mode, timelineBuckets]);
 
     const listData = useMemo(() => {
         if (mode === "ALL") {
             const out = [];
+
             if (dailyPrep.prioritySorted.length) {
                 out.push({ _type: "divider", id: "div-pri", title: "PRIORITY FIRST" });
                 for (const p of dailyPrep.prioritySorted) {
                     out.push({
                         _type: "item",
-                        id: `p:${normKey(p.name)}`,
+                        id:`p:${p.key || "na"}:${p.keyName || p.key || ""}:${normKey(p.name)}`,
                         name: p.name,
                         qty: p.qty,
                         priorityKey: p.key,
                     });
                 }
             }
+
             out.push({
                 _type: "divider",
                 id: "div-all",
                 title: dailyPrep.prioritySorted.length ? "EVERYTHING ELSE" : "PREP LIST",
             });
+
             for (const n of dailyPrep.othersSorted) {
                 out.push({
                     _type: "item",
-                    id: `n:${normKey(n.name)}`,
+                    id: `n:${n.key}`,
                     name: n.name,
                     qty: n.qty,
                     priorityKey: null,
                 });
             }
+
             return out;
         }
 
-        return timelineBuckets.map((b) => ({
-            _type: "bucket",
-            id: `bucket:${b.key}`,
-            bucket: b,
-        }));
+        return timelineBuckets.map((b) => ({ _type: "bucket", id: `bucket:${b.key}`, bucket: b }));
     }, [mode, dailyPrep, timelineBuckets]);
 
     const headerSubtitle = useMemo(() => {
-        return `${formatDate(todayStr)} • ${todaysOrders.length} order${todaysOrders.length === 1 ? "" : "s"} • ${dailyPrep.dailyTotal} prep item${dailyPrep.dailyTotal === 1 ? "" : "s"}${dailyPrep.dailyPriority ? ` • ${dailyPrep.dailyPriority} priority` : ""
-            }`;
+        return `${formatDate(todayStr)} • ${todaysOrders.length} order${todaysOrders.length === 1 ? "" : "s"} • ${dailyPrep.dailyTotal
+            } prep item${dailyPrep.dailyTotal === 1 ? "" : "s"}${dailyPrep.dailyPriority ? ` • ${dailyPrep.dailyPriority} priority` : ""}`;
     }, [todayStr, todaysOrders.length, dailyPrep.dailyTotal, dailyPrep.dailyPriority]);
 
     return (
@@ -535,12 +477,7 @@ export default function Prep() {
                             </View>
 
                             <View style={{ height: 12 }} />
-                            <ChipToggle
-                                leftLabel="Timeline"
-                                rightLabel="All items"
-                                value={mode === "TIMELINE" ? "TIMELINE" : "ALL"}
-                                onChange={setMode}
-                            />
+                            <ChipToggle leftLabel="Timeline" rightLabel="All items" value={mode} onChange={setMode} />
 
                             <Text style={{ marginTop: 10, color: "rgba(11,18,32,0.55)", fontWeight: "800", fontSize: 12 }}>
                                 {mode === "TIMELINE"
@@ -560,9 +497,7 @@ export default function Prep() {
                                     }}
                                 >
                                     <Text style={{ fontWeight: "900", color: INK }}>Couldn’t load prep list</Text>
-                                    <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
-                                        {String(error.message || error)}
-                                    </Text>
+                                    <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>{String(error.message || error)}</Text>
                                 </View>
                             ) : null}
                         </View>
@@ -570,25 +505,13 @@ export default function Prep() {
                 }
                 ListEmptyComponent={
                     <View style={{ paddingHorizontal: 14 }}>
-                        <View
-                            style={{
-                                padding: 18,
-                                backgroundColor: "white",
-                                borderRadius: 22,
-                                borderWidth: 1,
-                                borderColor: BORDER,
-                            }}
-                        >
-                            <Text style={{ fontWeight: "900", fontSize: 16, color: INK }}>
-                                {isLoading ? "Loading…" : "No prep items for today"}
-                            </Text>
-                            <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
-                                Pull down to refresh.
-                            </Text>
+                        <View style={{ padding: 18, backgroundColor: "white", borderRadius: 22, borderWidth: 1, borderColor: BORDER }}>
+                            <Text style={{ fontWeight: "900", fontSize: 16, color: INK }}>{isLoading ? "Loading…" : "No prep items for today"}</Text>
+                            <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>Pull down to refresh.</Text>
                         </View>
                     </View>
                 }
-                renderItem={({ item, index }) => {
+                renderItem={({ item }) => {
                     if (item._type === "bucket") {
                         const b = item.bucket;
                         const isOpen = expanded.has(b.key);
@@ -625,46 +548,29 @@ export default function Prep() {
                                         <View style={{ flex: 1, minWidth: 0 }}>
                                             <Text style={{ fontWeight: "950", color: INK }} numberOfLines={1}>
                                                 {b.title}
-                                                <Text style={{ color: "rgba(11,18,32,0.55)", fontWeight: "900" }}>
-                                                    {" "}
-                                                    · {b.hint}
-                                                </Text>
+                                                <Text style={{ color: "rgba(11,18,32,0.55)", fontWeight: "900" }}> · {b.hint}</Text>
                                             </Text>
-                                            <Text
-                                                style={{
-                                                    marginTop: 4,
-                                                    color: MUTED,
-                                                    fontWeight: "800",
-                                                    fontSize: 12,
-                                                }}
-                                                numberOfLines={1}
-                                            >
-                                                {b.orders.length} order{b.orders.length === 1 ? "" : "s"} • {b.totalItems} prep item
-                                                {b.totalItems === 1 ? "" : "s"}
+
+                                            <Text style={{ marginTop: 4, color: MUTED, fontWeight: "800", fontSize: 12 }} numberOfLines={1}>
+                                                {b.orders.length} order{b.orders.length === 1 ? "" : "s"} • {b.totalItems} prep item{b.totalItems === 1 ? "" : "s"}
                                                 {b.priorityItems ? ` • ${b.priorityItems} priority` : ""}
                                             </Text>
                                         </View>
 
                                         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
                                             <QtyPill qty={b.totalItems} />
-                                            <Ionicons
-                                                name={isOpen ? "chevron-up" : "chevron-down"}
-                                                size={18}
-                                                color="rgba(11,18,32,0.55)"
-                                            />
+                                            <Ionicons name={isOpen ? "chevron-up" : "chevron-down"} size={18} color="rgba(11,18,32,0.55)" />
                                         </View>
                                     </View>
 
                                     {!isOpen ? (
                                         <View style={{ marginTop: 12 }}>
                                             {b.totalItems === 0 ? (
-                                                <Text style={{ color: MUTED, fontWeight: "800", fontSize: 12 }}>
-                                                    Nothing in this block.
-                                                </Text>
+                                                <Text style={{ color: MUTED, fontWeight: "800", fontSize: 12 }}>Nothing in this block.</Text>
                                             ) : (
                                                 b.preview.map((p, i) => (
                                                     <View
-                                                        key={`${b.key}:prev:${i}`}
+                                                        key={`${b.key}:prev:${p.key}`}
                                                         style={{
                                                             marginTop: i === 0 ? 0 : 8,
                                                             flexDirection: "row",
@@ -673,14 +579,7 @@ export default function Prep() {
                                                             gap: 12,
                                                         }}
                                                     >
-                                                        <Text
-                                                            style={{
-                                                                flex: 1,
-                                                                color: INK,
-                                                                fontWeight: p._p ? "950" : "900",
-                                                            }}
-                                                            numberOfLines={1}
-                                                        >
+                                                        <Text style={{ flex: 1, color: INK, fontWeight: p._p ? "950" : "900" }} numberOfLines={1}>
                                                             {p.name}
                                                         </Text>
                                                         <Text style={{ color: MUTED, fontWeight: "950" }}>{p.qty}</Text>
@@ -688,31 +587,19 @@ export default function Prep() {
                                                 ))
                                             )}
 
-                                            {/* quick glance times even when collapsed */}
                                             <BucketTimesPills orders={b.orders} />
                                         </View>
                                     ) : (
                                         <View style={{ marginTop: 12 }}>
                                             {b.totalItems === 0 ? (
-                                                <Text style={{ color: MUTED, fontWeight: "800", fontSize: 12 }}>
-                                                    Nothing in this block.
-                                                </Text>
+                                                <Text style={{ color: MUTED, fontWeight: "800", fontSize: 12 }}>Nothing in this block.</Text>
                                             ) : (
                                                 <>
                                                     {b.itemsPriority.length ? (
                                                         <>
-                                                            <Text
-                                                                style={{
-                                                                    color: CFA_RED,
-                                                                    fontWeight: "950",
-                                                                    fontSize: 12,
-                                                                    marginBottom: 8,
-                                                                }}
-                                                            >
-                                                                PRIORITY
-                                                            </Text>
+                                                            <Text style={{ color: CFA_RED, fontWeight: "950", fontSize: 12, marginBottom: 8 }}>PRIORITY</Text>
                                                             {b.itemsPriority.map((p) => (
-                                                                <View key={`bp:${b.key}:${normKey(p.name)}`} style={{ marginBottom: 10 }}>
+                                                                <View key={`bp:${b.key}:${p.key || "na"}:${normKey(p.name)}`} style={{ marginBottom: 10 }}>
                                                                     <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
                                                                         <View style={{ flex: 1 }}>
                                                                             <Text style={{ fontWeight: "950", color: INK }} numberOfLines={2}>
@@ -741,7 +628,7 @@ export default function Prep() {
                                                                 OTHER
                                                             </Text>
                                                             {b.itemsOther.map((n) => (
-                                                                <View key={`bo:${b.key}:${normKey(n.name)}`} style={{ marginBottom: 10 }}>
+                                                                <View key={`bo:${b.key}:${n.key}`} style={{ marginBottom: 10 }}>
                                                                     <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
                                                                         <Text style={{ flex: 1, fontWeight: "900", color: INK }} numberOfLines={2}>
                                                                             {n.name}
@@ -767,9 +654,7 @@ export default function Prep() {
                         return (
                             <View style={{ paddingHorizontal: 14, paddingTop: 6, paddingBottom: 10 }}>
                                 <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                                    <Text style={{ fontWeight: "950", color: INK, fontSize: 12, letterSpacing: 0.2 }}>
-                                        {item.title}
-                                    </Text>
+                                    <Text style={{ fontWeight: "950", color: INK, fontSize: 12, letterSpacing: 0.2 }}>{item.title}</Text>
                                     <View style={{ flex: 1, height: 1, backgroundColor: "rgba(11,18,32,0.10)" }} />
                                 </View>
                             </View>
@@ -789,7 +674,7 @@ export default function Prep() {
                                     borderWidth: 1,
                                     borderColor: isPriority ? "rgba(229,22,54,0.18)" : BORDER,
                                     shadowColor: "#000",
-                                    shadowOpacity: isPriority ? 0.10 : 0.06,
+                                    shadowOpacity: isPriority ? 0.1 : 0.06,
                                     shadowRadius: 16,
                                     shadowOffset: { width: 0, height: 10 },
                                     elevation: isPriority ? 9 : 6,
@@ -797,14 +682,7 @@ export default function Prep() {
                             >
                                 <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
                                     <View style={{ flex: 1 }}>
-                                        <Text
-                                            style={{
-                                                fontSize: 15,
-                                                fontWeight: isPriority ? "950" : "900",
-                                                color: INK,
-                                            }}
-                                            numberOfLines={2}
-                                        >
+                                        <Text style={{ fontSize: 15, fontWeight: isPriority ? "950" : "900", color: INK }} numberOfLines={2}>
                                             {item.name}
                                         </Text>
                                         <PriorityTag label={tag} />

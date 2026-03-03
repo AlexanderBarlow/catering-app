@@ -49,7 +49,6 @@ function IOS26LiquidTabBar(props) {
   const pillW = Math.max(0, slotW - PILL_SIDE_INSET * 2);
 
   const activeIndex = typeof state.index === "number" ? state.index : 0;
-
   const x = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -85,45 +84,63 @@ function IOS26LiquidTabBar(props) {
           height: 78,
           borderRadius: 38,
           overflow: "hidden",
+
+          // More defined lift
           shadowColor: "#000",
-          shadowOpacity: 0.14,
-          shadowRadius: 22,
-          shadowOffset: { width: 0, height: 14 },
-          elevation: 18,
-          backgroundColor: "#fff",
+          shadowOpacity: 0.22,
+          shadowRadius: 30,
+          shadowOffset: { width: 0, height: 18 },
+          elevation: 26,
+
+          // A touch more base tint so it separates from white screens
+          backgroundColor: "rgba(255,255,255,0.20)",
+
+          // OUTER stroke (definition)
           borderWidth: 1,
-          borderColor: "rgba(0,0,0,0.06)",
+          borderColor: "rgba(15,23,42,0.14)",
         }}
       >
         <BlurView
-          intensity={Platform.OS === "ios" ? 14 : 18}
+          intensity={Platform.OS === "ios" ? 42 : 24}
           tint="light"
           style={{ flex: 1 }}
         >
-          {/* Frost */}
+          {/* Frost fill (keep subtle so it doesn't go "milky") */}
           <View
             pointerEvents="none"
             style={[
               StyleSheet.absoluteFillObject,
               {
-                backgroundColor:
-                  Platform.OS === "ios"
-                    ? "rgba(255,255,255,0.84)"
-                    : "rgba(255,255,255,0.90)",
+                backgroundColor: "rgba(255,255,255,0.22)",
               },
             ]}
           />
 
-          {/* Top sheen */}
+          {/* INNER highlight stroke (crisp glass edge) */}
           <View
             pointerEvents="none"
             style={{
               position: "absolute",
-              top: 0,
+              top: 1,
+              left: 1,
+              right: 1,
+              bottom: 1,
+              borderRadius: 37,
+              borderWidth: 1,
+              borderColor: "rgba(255,255,255,0.70)",
+            }}
+          />
+
+          {/* Soft inner vignette for depth (no hard line) */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
               left: 0,
               right: 0,
-              height: 18,
-              backgroundColor: "rgba(255,255,255,0.38)",
+              top: 0,
+              bottom: 0,
+              backgroundColor: "rgba(15,23,42,0.03)",
             }}
           />
 
@@ -145,24 +162,29 @@ function IOS26LiquidTabBar(props) {
                   flex: 1,
                   borderRadius: 28,
                   overflow: "hidden",
-                  backgroundColor: "rgba(229,22,54,0.10)",
+
+                  // Defined but still glassy
+                  backgroundColor: "rgba(229,22,54,0.12)",
                   borderWidth: 1,
-                  borderColor: "rgba(229,22,54,0.18)",
+                  borderColor: "rgba(229,22,54,0.26)",
+
                   shadowColor: CFA_RED,
                   shadowOpacity: 0.14,
-                  shadowRadius: 16,
-                  shadowOffset: { width: 0, height: 12 },
+                  shadowRadius: 14,
+                  shadowOffset: { width: 0, height: 10 },
                   elevation: 10,
                 }}
               >
+                {/* subtle pill gloss (NOT a strip across the whole dock) */}
                 <View
+                  pointerEvents="none"
                   style={{
                     position: "absolute",
                     top: 0,
                     left: 0,
                     right: 0,
-                    height: 18,
-                    backgroundColor: "rgba(255,255,255,0.26)",
+                    height: 14,
+                    backgroundColor: "rgba(255,255,255,0.18)",
                   }}
                 />
               </View>
@@ -218,8 +240,8 @@ function IOS26LiquidTabBar(props) {
                   onPress={onPress}
                   onLongPress={onLongPress}
                   style={({ pressed }) => ({
-                    width: slotW || undefined, // avoid 0-width before layout
-                    flex: slotW ? undefined : 1, // fallback until layout happens
+                    width: slotW || undefined,
+                    flex: slotW ? undefined : 1,
                     height: 62,
                     borderRadius: 28,
                     alignItems: "center",
@@ -233,11 +255,11 @@ function IOS26LiquidTabBar(props) {
                   <Ionicons
                     name={iconName}
                     size={28}
-                    color={isFocused ? CFA_RED : "rgba(15,23,42,0.70)"}
+                    color={isFocused ? CFA_RED : "rgba(15,23,42,0.78)"}
                     style={
                       isFocused
                         ? {
-                            textShadowColor: "rgba(229,22,54,0.22)",
+                            textShadowColor: "rgba(229,22,54,0.18)",
                             textShadowRadius: 6,
                           }
                         : undefined
