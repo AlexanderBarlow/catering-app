@@ -27,11 +27,9 @@ function yyyyMmDdLocalFromRaw(raw) {
   if (!raw) return null;
   const s = String(raw);
 
-  // ✅ If it begins with YYYY-MM-DD, keep that (covers ISO timestamps too)
   const match = s.match(/^(\d{4}-\d{2}-\d{2})/);
   if (match?.[1]) return match[1];
 
-  // Fallback: compute LOCAL yyyy-mm-dd
   const d = new Date(raw);
   if (!Number.isFinite(d.getTime())) return null;
 
@@ -114,20 +112,33 @@ function DayTile({ label, count, active, onPress, compact = false }) {
         transform: [{ scale: pressed ? 0.99 : 1 }],
       })}
     >
+      {/* FIX: prevent the badge from dropping under the next card */}
       <View
         style={{
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 10,
+          flexWrap: "nowrap",
         }}
       >
-        <Text style={{ fontWeight: "900", color: INK, fontSize: 12 }} numberOfLines={1}>
+        <Text
+          style={{
+            fontWeight: "900",
+            color: INK,
+            fontSize: 12,
+            flex: 1,
+            minWidth: 0,
+            flexShrink: 1,
+          }}
+          numberOfLines={1}
+        >
           {label}
         </Text>
 
         <View
           style={{
+            flexShrink: 0,
             paddingHorizontal: 10,
             paddingVertical: 6,
             borderRadius: 999,
@@ -143,7 +154,10 @@ function DayTile({ label, count, active, onPress, compact = false }) {
       </View>
 
       {compact ? (
-        <Text style={{ marginTop: 6, fontWeight: "800", color: MUTED, fontSize: 12 }} numberOfLines={1}>
+        <Text
+          style={{ marginTop: 6, fontWeight: "800", color: MUTED, fontSize: 12 }}
+          numberOfLines={1}
+        >
           order{count === 1 ? "" : "s"}
         </Text>
       ) : (
@@ -180,7 +194,7 @@ export default function Week() {
   const { width, height } = useWindowDimensions();
 
   const isLandscape = width > height;
-  const isWide = width >= 700; // big-phone landscape / tablet
+  const isWide = width >= 700;
   const useSplit = isLandscape && isWide;
 
   const days = useMemo(() => weekDays(new Date()), []);
@@ -237,8 +251,7 @@ export default function Week() {
     for (const o of selectedOrders) itemsTotal += sumItems(o);
 
     if (count === 0) return "No orders";
-    return `${count} order${count === 1 ? "" : "s"} • ${itemsTotal} item${itemsTotal === 1 ? "" : "s"
-      }`;
+    return `${count} order${count === 1 ? "" : "s"} • ${itemsTotal} item${itemsTotal === 1 ? "" : "s"}`;
   }, [selectedOrders]);
 
   const selectedLabel = useMemo(() => {
@@ -268,157 +281,167 @@ export default function Week() {
     return `${range} • ${total} order${total === 1 ? "" : "s"}`;
   }, [from, to, all.length]);
 
-  // ===== PORTRAIT =====
+  // ===== PORTRAIT: keep original look, but sticky =====
   if (!useSplit) {
     return (
       <View style={{ flex: 1, backgroundColor: BG }}>
         <TopHeader title="Week" subtitle={subtitle} />
 
-        <ScrollView
-          style={{ flex: 1, backgroundColor: BG }}
-          contentContainerStyle={{
-            paddingTop: 6,
-            paddingBottom: Math.max(insets.bottom, 12) + 90,
-          }}
-          refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} />}
+        <FlatList
+          data={selectedOrders}
+          keyExtractor={(item) => item.id}
           showsVerticalScrollIndicator={false}
-        >
-          <View style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
-            {error ? (
+          refreshControl={<RefreshControl refreshing={isFetching} onRefresh={refetch} />}
+          stickyHeaderIndices={[0]}
+          ListHeaderComponent={
+            <View style={{ backgroundColor: BG, paddingTop: 6 }}>
+              <View style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
+                {error ? (
+                  <View
+                    style={{
+                      backgroundColor: "white",
+                      borderRadius: 22,
+                      padding: 12,
+                      borderWidth: 1,
+                      borderColor: "rgba(229,22,54,0.16)",
+                    }}
+                  >
+                    <Text style={{ fontWeight: "900", color: INK }}>Couldn’t load week</Text>
+                    <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
+                      {String(error.message || error)}
+                    </Text>
+                  </View>
+                ) : null}
+
+                <View style={{ marginTop: error ? 10 : 0 }}>
+                  <FlatList
+                    horizontal
+                    data={days}
+                    keyExtractor={(d) => yyyyMmDd(d)}
+                    showsHorizontalScrollIndicator={false}
+                    ItemSeparatorComponent={() => <View style={{ width: 10 }} />}
+                    renderItem={({ item }) => {
+                      const key = yyyyMmDd(item);
+                      return (
+                        <DayTile
+                          label={pretty(item)}
+                          count={counts.get(key) || 0}
+                          active={key === selectedKey}
+                          onPress={() => setSelectedKey(key)}
+                        />
+                      );
+                    }}
+                  />
+                </View>
+
+                <View
+                  style={{
+                    marginTop: 10,
+                    backgroundColor: "white",
+                    borderRadius: 20,
+                    padding: 12,
+                    borderWidth: 1,
+                    borderColor: BORDER,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                  }}
+                >
+                  <Pressable
+                    onPress={() => jump(-1)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Previous day"
+                    style={({ pressed }) => ({
+                      width: 40,
+                      height: 40,
+                      borderRadius: 14,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: pressed ? "rgba(11,18,32,0.06)" : "rgba(11,18,32,0.04)",
+                      borderWidth: 1,
+                      borderColor: "rgba(11,18,32,0.08)",
+                      opacity: dayKeys.indexOf(selectedKey) === 0 ? 0.45 : 1,
+                    })}
+                    disabled={dayKeys.indexOf(selectedKey) === 0}
+                  >
+                    <Text style={{ fontWeight: "900", color: INK, fontSize: 16 }}>‹</Text>
+                  </Pressable>
+
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={{ fontWeight: "900", color: INK }} numberOfLines={1}>
+                      {selectedLabel}
+                    </Text>
+                    <Text style={{ marginTop: 4, color: MUTED, fontWeight: "700" }} numberOfLines={1}>
+                      {selectedSummary}
+                    </Text>
+                  </View>
+
+                  <Pressable
+                    onPress={() => jump(1)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Next day"
+                    style={({ pressed }) => ({
+                      width: 40,
+                      height: 40,
+                      borderRadius: 14,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: pressed ? "rgba(11,18,32,0.06)" : "rgba(11,18,32,0.04)",
+                      borderWidth: 1,
+                      borderColor: "rgba(11,18,32,0.08)",
+                      opacity: dayKeys.indexOf(selectedKey) === dayKeys.length - 1 ? 0.45 : 1,
+                    })}
+                    disabled={dayKeys.indexOf(selectedKey) === dayKeys.length - 1}
+                  >
+                    <Text style={{ fontWeight: "900", color: INK, fontSize: 16 }}>›</Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              {/* subtle divider so the sticky header feels intentional */}
               <View
                 style={{
-                  backgroundColor: "white",
-                  borderRadius: 22,
-                  padding: 12,
-                  borderWidth: 1,
-                  borderColor: "rgba(229,22,54,0.16)",
-                }}
-              >
-                <Text style={{ fontWeight: "900", color: INK }}>Couldn’t load week</Text>
-                <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
-                  {String(error.message || error)}
-                </Text>
-              </View>
-            ) : null}
-
-            <View style={{ marginTop: error ? 10 : 0 }}>
-              <FlatList
-                horizontal
-                data={days}
-                keyExtractor={(d) => yyyyMmDd(d)}
-                showsHorizontalScrollIndicator={false}
-                ItemSeparatorComponent={() => <View style={{ width: 10 }} />}
-                renderItem={({ item }) => {
-                  const key = yyyyMmDd(item);
-                  return (
-                    <DayTile
-                      label={pretty(item)}
-                      count={counts.get(key) || 0}
-                      active={key === selectedKey}
-                      onPress={() => setSelectedKey(key)}
-                    />
-                  );
+                  height: 1,
+                  backgroundColor: "rgba(11,18,32,0.06)",
+                  marginHorizontal: 14,
+                  marginBottom: 12,
                 }}
               />
             </View>
-
+          }
+          contentContainerStyle={{
+            paddingHorizontal: 14,
+            paddingBottom: Math.max(insets.bottom, 12) + 90,
+          }}
+          ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+          renderItem={({ item }) => (
+            <OrderCard order={item} onPress={() => router.push(`/order/${item.id}`)} />
+          )}
+          ListEmptyComponent={
             <View
               style={{
-                marginTop: 10,
                 backgroundColor: "white",
-                borderRadius: 20,
-                padding: 12,
+                borderRadius: 24,
+                padding: 16,
                 borderWidth: 1,
                 borderColor: BORDER,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 10,
               }}
             >
-              <Pressable
-                onPress={() => jump(-1)}
-                accessibilityRole="button"
-                accessibilityLabel="Previous day"
-                style={({ pressed }) => ({
-                  width: 40,
-                  height: 40,
-                  borderRadius: 14,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: pressed ? "rgba(11,18,32,0.06)" : "rgba(11,18,32,0.04)",
-                  borderWidth: 1,
-                  borderColor: "rgba(11,18,32,0.08)",
-                  opacity: dayKeys.indexOf(selectedKey) === 0 ? 0.45 : 1,
-                })}
-                disabled={dayKeys.indexOf(selectedKey) === 0}
-              >
-                <Text style={{ fontWeight: "900", color: INK, fontSize: 16 }}>‹</Text>
-              </Pressable>
-
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: "900", color: INK }} numberOfLines={1}>
-                  {selectedLabel}
-                </Text>
-                <Text style={{ marginTop: 4, color: MUTED, fontWeight: "700" }} numberOfLines={1}>
-                  {selectedSummary}
-                </Text>
-              </View>
-
-              <Pressable
-                onPress={() => jump(1)}
-                accessibilityRole="button"
-                accessibilityLabel="Next day"
-                style={({ pressed }) => ({
-                  width: 40,
-                  height: 40,
-                  borderRadius: 14,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: pressed ? "rgba(11,18,32,0.06)" : "rgba(11,18,32,0.04)",
-                  borderWidth: 1,
-                  borderColor: "rgba(11,18,32,0.08)",
-                  opacity: dayKeys.indexOf(selectedKey) === dayKeys.length - 1 ? 0.45 : 1,
-                })}
-                disabled={dayKeys.indexOf(selectedKey) === dayKeys.length - 1}
-              >
-                <Text style={{ fontWeight: "900", color: INK, fontSize: 16 }}>›</Text>
-              </Pressable>
+              <Text style={{ fontWeight: "900", fontSize: 16, color: INK }}>
+                {isLoading ? "Loading..." : "No orders"}
+              </Text>
+              <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
+                Select another day above to see its orders.
+              </Text>
             </View>
-          </View>
-
-          <View style={{ paddingHorizontal: 14 }}>
-            {selectedOrders.length === 0 ? (
-              <View
-                style={{
-                  backgroundColor: "white",
-                  borderRadius: 24,
-                  padding: 16,
-                  borderWidth: 1,
-                  borderColor: BORDER,
-                }}
-              >
-                <Text style={{ fontWeight: "900", fontSize: 16, color: INK }}>
-                  {isLoading ? "Loading..." : "No orders"}
-                </Text>
-                <Text style={{ marginTop: 6, color: MUTED, fontWeight: "700" }}>
-                  Select another day above to see its orders.
-                </Text>
-              </View>
-            ) : (
-              selectedOrders.map((item) => (
-                <View key={item.id} style={{ marginBottom: 12 }}>
-                  <OrderCard order={item} onPress={() => router.push(`/order/${item.id}`)} />
-                </View>
-              ))
-            )}
-          </View>
-        </ScrollView>
+          }
+        />
       </View>
     );
   }
 
-  // ===== LANDSCAPE SPLIT (no new hooks here; safe on rotation) =====
+  // ===== LANDSCAPE SPLIT (keep your original) =====
   const TAB_BAR_H = 86;
   const pad = 14;
   const leftW = Math.min(380, Math.max(320, Math.floor(width * 0.34)));

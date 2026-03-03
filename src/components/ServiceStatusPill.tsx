@@ -6,27 +6,39 @@ import {
   ActivityIndicator,
   StyleSheet,
   Platform,
+  AppState,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 
-const CFA_RED = "#E51636";
-
 type Status = "loading" | "up" | "down";
 
 export default function ServiceStatusPill({
+  intervalMs = 30000,
+  tickMs = 1000,
+
+  // header mode: no absolute positioning
+  absolute = false,
   top = 14,
   right = 16,
-  intervalMs = 30000,
 }: {
+  intervalMs?: number;
+  tickMs?: number;
+
+  absolute?: boolean;
   top?: number;
   right?: number;
-  intervalMs?: number;
 }) {
   const API_BASE = process.env.EXPO_PUBLIC_API_BASE;
+
   const [status, setStatus] = useState<Status>("loading");
   const [lastOkAt, setLastOkAt] = useState<number | null>(null);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  const pollTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tickInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const inFlight = useRef(false);
+  const appState = useRef(AppState.currentState);
 
   const label = useMemo(() => {
     if (status === "loading") return "Checking";
@@ -46,46 +58,121 @@ export default function ServiceStatusPill({
     return "alert-circle";
   }, [status]);
 
-  const checkHealth = async () => {
-    try {
-      setStatus("loading");
+  const stopPoll = () => {
+    if (pollTimeout.current) clearTimeout(pollTimeout.current);
+    pollTimeout.current = null;
+  };
 
+  const scheduleNext = () => {
+    stopPoll();
+    pollTimeout.current = setTimeout(() => {
+      void checkHealth({ showLoading: false, scheduleNextAfter: true });
+    }, intervalMs);
+  };
+
+  const checkHealth = async ({
+    showLoading = false,
+    scheduleNextAfter = false,
+  }: {
+    showLoading?: boolean;
+    scheduleNextAfter?: boolean;
+  } = {}) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+
+    try {
       if (!API_BASE) throw new Error("Missing EXPO_PUBLIC_API_BASE");
+
+      // only show loading on first mount / manual press
+      if (showLoading && status !== "loading") setStatus("loading");
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 4500);
 
-      const res = await fetch(`${API_BASE}/health`, {
+      // cache buster
+      const url = `${API_BASE}/health?t=${Date.now()}`;
+
+      const res = await fetch(url, {
         method: "GET",
         signal: controller.signal,
-        headers: { "Cache-Control": "no-cache" },
+        headers: {
+          "Cache-Control": "no-cache, no-store, max-age=0",
+          Pragma: "no-cache",
+        },
       });
 
       clearTimeout(timeout);
 
       if (!res.ok) throw new Error(`Health not ok: ${res.status}`);
 
+      const ts = Date.now();
       setStatus("up");
-      setLastOkAt(Date.now());
+      setLastOkAt(ts);
+      setNow(ts);
     } catch (e) {
       setStatus("down");
+      setNow(Date.now());
+    } finally {
+      inFlight.current = false;
+      if (scheduleNextAfter) scheduleNext();
     }
   };
 
+  // Poll loop + resume on foreground
   useEffect(() => {
-    checkHealth();
-    timer.current = setInterval(checkHealth, intervalMs);
+    void checkHealth({ showLoading: true, scheduleNextAfter: true });
+
+    const sub = AppState.addEventListener("change", (next) => {
+      const prev = appState.current;
+      appState.current = next;
+
+      if (prev.match(/inactive|background/) && next === "active") {
+        void checkHealth({ showLoading: false, scheduleNextAfter: true });
+      }
+
+      if (next.match(/inactive|background/)) {
+        stopPoll();
+      }
+    });
 
     return () => {
-      if (timer.current) clearInterval(timer.current);
+      stopPoll();
+      sub.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [API_BASE, intervalMs]);
 
+  // UI ticker for the seconds (forces re-render even if parent doesn't)
+  useEffect(() => {
+    if (tickInterval.current) clearInterval(tickInterval.current);
+    tickInterval.current = null;
+
+    if (status === "up" && lastOkAt) {
+      tickInterval.current = setInterval(() => setNow(Date.now()), tickMs);
+    }
+
+    return () => {
+      if (tickInterval.current) clearInterval(tickInterval.current);
+      tickInterval.current = null;
+    };
+  }, [status, lastOkAt, tickMs]);
+
+  const secondsSinceOk =
+    status === "up" && lastOkAt
+      ? Math.max(0, Math.floor((now - lastOkAt) / 1000))
+      : null;
+
   return (
-    <View pointerEvents="box-none" style={[styles.wrap, { top, right }]}>
+    <View
+      style={[
+        absolute ? styles.wrapAbs : styles.wrapInline,
+        absolute ? { top, right } : null,
+      ]}
+    >
       <Pressable
-        onPress={checkHealth}
+        onPress={() =>
+          void checkHealth({ showLoading: true, scheduleNextAfter: true })
+        }
         style={({ pressed }) => [
           { transform: [{ scale: pressed ? 0.98 : 1 }] },
         ]}
@@ -102,15 +189,13 @@ export default function ServiceStatusPill({
               {status === "loading" ? (
                 <ActivityIndicator size="small" color={color} />
               ) : (
-                <Ionicons name={icon as any} size={16} color={color} />
+                <Ionicons name={icon} size={16} color={color} />
               )}
 
               <Text style={[styles.text, { color }]}>{label}</Text>
 
-              {status === "up" && lastOkAt ? (
-                <Text style={styles.subText}>
-                  {Math.max(0, Math.floor((Date.now() - lastOkAt) / 1000))}s
-                </Text>
+              {secondsSinceOk !== null ? (
+                <Text style={styles.subText}>{secondsSinceOk}s</Text>
               ) : null}
             </View>
           </BlurView>
@@ -121,10 +206,18 @@ export default function ServiceStatusPill({
 }
 
 const styles = StyleSheet.create({
-  wrap: {
+  // ✅ header-friendly: no absolute positioning
+  wrapInline: {
+    zIndex: 10,
+    alignSelf: "center",
+  },
+
+  // optional if you ever want it floating again
+  wrapAbs: {
     position: "absolute",
     zIndex: 9999,
   },
+
   shell: {
     borderRadius: 999,
     overflow: "hidden",

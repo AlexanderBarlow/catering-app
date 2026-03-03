@@ -1,8 +1,6 @@
-import { Pressable, Text, View } from "react-native";
-import StatusPill from "./StatusPill";
+import React, { useMemo } from "react";
+import { Pressable, Text, View, StyleSheet } from "react-native";
 import { pickKitchenPriorityItems } from "../../src/utils/kitchenItems";
-// adjust path to match your structure
-
 
 const CFA_RED = "#E51636";
 const INK = "#0B1220";
@@ -32,80 +30,70 @@ function isOverdue(order) {
     return Date.now() > t.getTime();
 }
 
+// Data-driven status map
+const STATUS_META = {
+    COMPLETED: {
+        label: "Completed",
+        icon: "✓",
+        bg: "rgba(34,197,94,0.10)",
+        border: "rgba(34,197,94,0.22)",
+        fg: "rgba(14,116,55,0.95)",
+        rail: "rgba(34,197,94,0.70)",
+    },
+    CANCELED: {
+        label: "Canceled",
+        icon: "✕",
+        bg: "rgba(148,163,184,0.18)",
+        border: "rgba(148,163,184,0.28)",
+        fg: "rgba(51,65,85,0.90)",
+        rail: "rgba(100,116,139,0.65)",
+    },
+    READY: {
+        label: "Ready",
+        icon: "•",
+        bg: "rgba(59,130,246,0.10)",
+        border: "rgba(59,130,246,0.20)",
+        fg: "rgba(30,64,175,0.95)",
+        rail: "rgba(59,130,246,0.70)",
+    },
+    IN_PROGRESS: {
+        label: "In Progress",
+        icon: "↻",
+        bg: "rgba(245,158,11,0.12)",
+        border: "rgba(245,158,11,0.22)",
+        fg: "rgba(146,64,14,0.95)",
+        rail: "rgba(245,158,11,0.72)",
+    },
+    ACCEPTED: {
+        label: "Accepted",
+        icon: "✓",
+        bg: "rgba(16,185,129,0.10)",
+        border: "rgba(16,185,129,0.20)",
+        fg: "rgba(6,95,70,0.95)",
+        rail: "rgba(16,185,129,0.70)",
+    },
+    RECEIVED: {
+        label: "Received",
+        icon: "↓",
+        bg: "rgba(99,102,241,0.10)",
+        border: "rgba(99,102,241,0.22)",
+        fg: "rgba(49,46,129,0.95)",
+        rail: "rgba(99,102,241,0.70)",
+    },
+};
+
+const DEFAULT_STATUS = {
+    label: "Needs Review",
+    icon: "!",
+    bg: "rgba(229,22,54,0.08)",
+    border: "rgba(229,22,54,0.18)",
+    fg: CFA_RED,
+    rail: "rgba(229,22,54,0.75)",
+};
+
 function getStatusMeta(status) {
     const s = String(status || "PENDING_REVIEW").toUpperCase();
-
-    // Tuned for quick scanning + “CFA red” for urgency
-    if (s === "COMPLETED") {
-        return {
-            label: "Completed",
-            icon: "✓",
-            bg: "rgba(34,197,94,0.10)",
-            border: "rgba(34,197,94,0.22)",
-            fg: "rgba(14,116,55,0.95)",
-            rail: "rgba(34,197,94,0.70)",
-        };
-    }
-    if (s === "CANCELED") {
-        return {
-            label: "Canceled",
-            icon: "✕",
-            bg: "rgba(148,163,184,0.18)",
-            border: "rgba(148,163,184,0.28)",
-            fg: "rgba(51,65,85,0.90)",
-            rail: "rgba(100,116,139,0.65)",
-        };
-    }
-    if (s === "READY") {
-        return {
-            label: "Ready",
-            icon: "•",
-            bg: "rgba(59,130,246,0.10)",
-            border: "rgba(59,130,246,0.20)",
-            fg: "rgba(30,64,175,0.95)",
-            rail: "rgba(59,130,246,0.70)",
-        };
-    }
-    if (s === "IN_PROGRESS") {
-        return {
-            label: "In Progress",
-            icon: "↻",
-            bg: "rgba(245,158,11,0.12)",
-            border: "rgba(245,158,11,0.22)",
-            fg: "rgba(146,64,14,0.95)",
-            rail: "rgba(245,158,11,0.72)",
-        };
-    }
-    if (s === "ACCEPTED") {
-        return {
-            label: "Accepted",
-            icon: "✓",
-            bg: "rgba(16,185,129,0.10)",
-            border: "rgba(16,185,129,0.20)",
-            fg: "rgba(6,95,70,0.95)",
-            rail: "rgba(16,185,129,0.70)",
-        };
-    }
-    if (s === "RECEIVED") {
-        return {
-            label: "Received",
-            icon: "↓",
-            bg: "rgba(99,102,241,0.10)",
-            border: "rgba(99,102,241,0.22)",
-            fg: "rgba(49,46,129,0.95)",
-            rail: "rgba(99,102,241,0.70)",
-        };
-    }
-
-    // default = PENDING_REVIEW / unknown
-    return {
-        label: "Needs Review",
-        icon: "!",
-        bg: "rgba(229,22,54,0.08)",
-        border: "rgba(229,22,54,0.18)",
-        fg: CFA_RED,
-        rail: "rgba(229,22,54,0.75)",
-    };
+    return STATUS_META[s] || DEFAULT_STATUS;
 }
 
 function StatusBadge({ status, overdue }) {
@@ -113,42 +101,19 @@ function StatusBadge({ status, overdue }) {
 
     return (
         <View
-            style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 8,
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 999,
-                backgroundColor: meta.bg,
-                borderWidth: 1,
-                borderColor: meta.border,
-            }}
+            style={[
+                styles.badge,
+                { backgroundColor: meta.bg, borderColor: meta.border },
+            ]}
             accessibilityRole="text"
             accessibilityLabel={`Status ${meta.label}${overdue ? ", overdue" : ""}`}
         >
-            <Text style={{ fontSize: 12, fontWeight: "900", color: meta.fg, marginTop: -0.5 }}>
-                {meta.icon}
-            </Text>
-            <Text style={{ fontSize: 12, fontWeight: "900", color: meta.fg }}>
-                {meta.label}
-            </Text>
+            <Text style={[styles.badgeIcon, { color: meta.fg }]}>{meta.icon}</Text>
+            <Text style={[styles.badgeText, { color: meta.fg }]}>{meta.label}</Text>
 
             {overdue ? (
-                <View
-                    style={{
-                        marginLeft: 6,
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 999,
-                        backgroundColor: "rgba(229,22,54,0.12)",
-                        borderWidth: 1,
-                        borderColor: "rgba(229,22,54,0.22)",
-                    }}
-                >
-                    <Text style={{ fontSize: 11, fontWeight: "950", color: CFA_RED, letterSpacing: 0.2 }}>
-                        OVERDUE
-                    </Text>
+                <View style={styles.overdueChip}>
+                    <Text style={styles.overdueText}>OVERDUE</Text>
                 </View>
             ) : null}
         </View>
@@ -219,8 +184,7 @@ function getServiceType(order) {
         !!order.dropoffAddress ||
         !!order.destination;
 
-    if (hasAddress) return "DELIVERY";
-    return "PICKUP";
+    return hasAddress ? "DELIVERY" : "PICKUP";
 }
 
 function getCustomerName(order) {
@@ -260,261 +224,300 @@ function compactItemLabel(name) {
 function ServicePill({ type }) {
     const isDelivery = type === "DELIVERY";
     return (
-        <View
-            style={{
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 999,
-                backgroundColor: isDelivery ? "rgba(229,22,54,0.10)" : "rgba(11,18,32,0.06)",
-                borderWidth: 1,
-                borderColor: isDelivery ? "rgba(229,22,54,0.22)" : "rgba(11,18,32,0.10)",
-            }}
-            accessibilityRole="text"
-            accessibilityLabel={isDelivery ? "Delivery" : "Pickup"}
-        >
-            <Text
-                style={{
-                    fontSize: 12,
-                    fontWeight: "900",
-                    color: isDelivery ? CFA_RED : INK,
-                    opacity: isDelivery ? 1 : 0.85,
-                    letterSpacing: 0.2,
-                }}
-            >
+        <View style={[styles.pill, isDelivery ? styles.pillDelivery : styles.pillPickup]}>
+            <Text style={[styles.pillText, isDelivery ? styles.pillTextDelivery : styles.pillTextPickup]}>
                 {isDelivery ? "DELIVERY" : "PICKUP"}
             </Text>
         </View>
     );
 }
 
-function MiniRow({ left, right }) {
+function ItemLine({ name, qty, idx }) {
     return (
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-            <Text style={{ fontSize: 12, fontWeight: "800", color: "rgba(11,18,32,0.70)" }} numberOfLines={1}>
-                {left}
-            </Text>
-            <Text style={{ fontSize: 12, fontWeight: "900", color: INK }}>
-                {right}
-            </Text>
-        </View>
-    );
-}
-
-function ItemLine({ name, qty, idx, isPriority }) {
-    return (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingTop: idx === 0 ? 10 : 8 }}>
-            <View
-                style={{
-                    minWidth: 22,
-                    height: 22,
-                    paddingHorizontal: 7,
-                    borderRadius: 999,
-                    backgroundColor: "rgba(11,18,32,0.06)",
-                    borderWidth: 1,
-                    borderColor: "rgba(11,18,32,0.10)",
-                    alignItems: "center",
-                    justifyContent: "center",
-                }}
-            >
-                <Text style={{ fontWeight: "900", fontSize: 12, color: INK, opacity: 0.9 }}>{qty}</Text>
+        <View style={[styles.itemLine, { paddingTop: idx === 0 ? 10 : 8 }]}>
+            <View style={styles.qtyChip}>
+                <Text style={styles.qtyText}>{qty}</Text>
             </View>
 
-            {isPriority ? (
-                <View
-                    style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 999,
-                        backgroundColor: "#E51636",
-                        opacity: 0.9,
-                    }}
-                />
-            ) : null}
-
-            <Text
-                style={{
-                    flex: 1,
-                    fontSize: 13,
-                    fontWeight: isPriority ? "950" : "800",
-                    color: INK,
-                    opacity: isPriority ? 0.95 : 0.88,
-                }}
-                numberOfLines={1}
-            >
+            <Text style={styles.itemText} numberOfLines={1}>
                 {compactItemLabel(name)}
             </Text>
         </View>
     );
 }
 
-
 export default function OrderCard({ order, onPress, showStatus = true }) {
-    const customer = getCustomerName(order);
-    const items = getItems(order);
-    const { priority, others } = pickKitchenPriorityItems(items);
+    const customer = useMemo(() => getCustomerName(order), [order]);
+    const items = useMemo(() => getItems(order), [order]);
 
-    // show up to 3 priority items; if none, fall back to normal items
+    const { priority } = useMemo(() => pickKitchenPriorityItems(items), [items]);
     const previewBase = priority.length ? priority : items;
-    const preview = previewBase.slice(0, 3);
-
-    // remaining count should reflect “base list” you’re previewing
+    const preview = useMemo(() => previewBase.slice(0, 3), [previewBase]);
     const remaining = Math.max(0, previewBase.length - preview.length);
 
+    const { time, dateShort } = useMemo(() => getWhen(order), [order]);
+    const serviceType = useMemo(() => getServiceType(order), [order]);
+    const overdue = useMemo(() => isOverdue(order), [order]);
+    const statusMeta = useMemo(() => getStatusMeta(order?.status), [order?.status]);
 
-    const { time, dateShort } = getWhen(order);
-    const serviceType = getServiceType(order);
-    const overdue = isOverdue(order);
-
-    const isDelivery = serviceType === "DELIVERY";
-    const statusMeta = getStatusMeta(order.status);
+    const accent = overdue ? CFA_RED : serviceType === "DELIVERY" ? CFA_RED : "rgba(11,18,32,0.45)";
 
     return (
         <Pressable
             onPress={onPress}
             accessibilityRole="button"
             accessibilityLabel={`Open order for ${customer}`}
-            style={({ pressed }) => [
-                {
-                    backgroundColor: "white",
-                    borderRadius: 22,
-                    padding: 14,
-                    marginBottom: 12,
-                    borderWidth: 1,
-                    borderColor: pressed ? "rgba(229,22,54,0.28)" : BORDER,
-                    shadowColor: "#000",
-                    shadowOpacity: pressed ? 0.06 : 0.10,
-                    shadowRadius: 18,
-                    shadowOffset: { width: 0, height: 10 },
-                    elevation: pressed ? 6 : 10,
-                    transform: [{ scale: pressed ? 0.985 : 1 }],
-                },
-            ]}
+            style={({ pressed }) => [styles.cardClean, pressed ? styles.cardCleanPressed : null]}
         >
-            {/* Top status strip (subtle premium “scan” affordance) */}
-            <View
-                style={{
-                    position: "absolute",
-                    left: 12,
-                    right: 12,
-                    top: 10,
-                    height: 6,
-                    borderRadius: 999,
-                    backgroundColor: overdue ? "rgba(229,22,54,0.22)" : "rgba(11,18,32,0.06)",
-                    overflow: "hidden",
-                }}
-                accessibilityElementsHidden
-            >
-                <View
-                    style={{
-                        height: "100%",
-                        width: overdue ? "100%" : "60%",
-                        borderRadius: 999,
-                        backgroundColor: overdue ? "rgba(229,22,54,0.72)" : statusMeta.rail,
-                    }}
-                />
-            </View>
+            {/* Single accent rail */}
+            <View style={[styles.rail, { backgroundColor: accent }]} accessibilityElementsHidden />
 
-            {/* Sleek accent rail */}
-            <View
-                style={{
-                    position: "absolute",
-                    left: 0,
-                    top: 12,
-                    bottom: 12,
-                    width: 4,
-                    borderTopRightRadius: 999,
-                    borderBottomRightRadius: 999,
-                    backgroundColor: overdue ? CFA_RED : (isDelivery ? CFA_RED : "rgba(11,18,32,0.55)"),
-                    opacity: 0.95,
-                }}
-                accessibilityElementsHidden
-            />
-
-            {/* Top row */}
-            <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginTop: 6 }}>
-                <View style={{ flex: 1, paddingLeft: 6 }}>
-                    <Text style={{ fontSize: 16, fontWeight: "900", color: INK }} numberOfLines={1}>
+            {/* Header */}
+            <View style={styles.header}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.customer} numberOfLines={1}>
                         {customer}
                     </Text>
 
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <View style={styles.pillsRow}>
                         <ServicePill type={serviceType} />
+                        {showStatus ? <StatusBadge status={order?.status} overdue={overdue} /> : null}
 
-                        {/* New “good looking” status badge */}
-                        {showStatus ? <StatusBadge status={order.status} overdue={overdue} /> : null}
-
-                        {/* Keep your item count pill */}
-                        <View
-                            style={{
-                                paddingHorizontal: 10,
-                                paddingVertical: 6,
-                                borderRadius: 999,
-                                backgroundColor: "rgba(229,22,54,0.06)",
-                                borderWidth: 1,
-                                borderColor: "rgba(229,22,54,0.14)",
-                            }}
-                            accessibilityRole="text"
-                            accessibilityLabel={`${items.length} items`}
-                        >
-                            <Text style={{ fontSize: 12, fontWeight: "900", color: "rgba(11,18,32,0.80)" }}>
+                        <View style={styles.itemsPill}>
+                            <Text style={styles.itemsPillText}>
                                 {items.length} item{items.length === 1 ? "" : "s"}
                             </Text>
                         </View>
                     </View>
                 </View>
 
-                {/* Right meta */}
-                <View style={{ alignItems: "flex-end", gap: 6 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <Text style={{ fontSize: 18, fontWeight: "900", color: overdue ? CFA_RED : INK }}>
-                            {time}
-                        </Text>
-                        <Text style={{ fontSize: 16, fontWeight: "900", color: "rgba(11,18,32,0.45)" }}>
-                            →
-                        </Text>
-                    </View>
-
+                <View style={styles.when}>
+                    <Text style={[styles.time, overdue ? styles.timeOverdue : null]}>{time}</Text>
                     {dateShort ? (
-                        <Text style={{ fontSize: 12, fontWeight: "800", color: overdue ? "rgba(229,22,54,0.70)" : MUTED }}>
-                            {dateShort}
-                        </Text>
-                    ) : null}
+                        <Text style={[styles.date, overdue ? styles.dateOverdue : null]}>{dateShort}</Text>
+                    ) : (
+                        <Text style={styles.dateMuted}> </Text>
+                    )}
                 </View>
             </View>
 
-            {/* Items preview */}
-            <View
-                style={{
-                    marginTop: 12,
-                    paddingTop: 8,
-                    borderTopWidth: 1,
-                    borderTopColor: "rgba(11,18,32,0.08)",
-                    paddingLeft: 6,
-                }}
-            >
+            {/* Items */}
+            <View style={styles.itemsWrap}>
                 {preview.length === 0 ? (
-                    <Text style={{ fontSize: 13, color: MUTED, fontWeight: "700" }}>
-                        No items listed
-                    </Text>
+                    <Text style={styles.emptyItems}>No items listed</Text>
                 ) : (
                     <>
                         {preview.map((it, idx) => (
                             <ItemLine key={`${it.name}-${idx}`} name={it.name} qty={it.qty} idx={idx} />
                         ))}
 
-                        {remaining > 0 ? (
-                            <Text style={{ marginTop: 10, fontSize: 12, fontWeight: "900", color: MUTED }}>
-                                + {remaining} more
-                            </Text>
-                        ) : null}
+                        {remaining > 0 ? <Text style={styles.moreText}>+ {remaining} more</Text> : null}
                     </>
                 )}
             </View>
 
-            {/* Bottom affordance */}
-            <View style={{ marginTop: 12, paddingLeft: 6 }}>
-                <MiniRow left={overdue ? "Past pickup time — tap to manage" : "Tap to open details"} right="Details" />
-            </View>
+            {/* Footer */}
+            <Text style={styles.footerHint} numberOfLines={1}>
+                {overdue ? "Past pickup time — tap to manage" : "Tap to open details"}
+            </Text>
+
+            {/* Subtle sheen */}
+            <View pointerEvents="none" style={styles.sheen} />
+
+            {/* Optional: keep this if you want the rail color to also reflect status */}
+            {/* <View pointerEvents="none" style={[styles.railGlow, { backgroundColor: statusMeta.rail }]} /> */}
         </Pressable>
     );
 }
+
+const styles = StyleSheet.create({
+    cardClean: {
+        backgroundColor: "white",
+        borderRadius: 22,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: BORDER,
+        shadowColor: "#000",
+        shadowOpacity: 0.10,
+        shadowRadius: 18,
+        shadowOffset: { width: 0, height: 10 },
+        elevation: 10,
+        overflow: "hidden",
+    },
+    cardCleanPressed: {
+        borderColor: "rgba(229,22,54,0.22)",
+        shadowOpacity: 0.06,
+        elevation: 6,
+        transform: [{ scale: 0.992 }],
+    },
+
+    rail: {
+        position: "absolute",
+        left: 0,
+        top: 12,
+        bottom: 12,
+        width: 3,
+        borderTopRightRadius: 999,
+        borderBottomRightRadius: 999,
+        opacity: 0.95,
+    },
+
+    header: {
+        flexDirection: "row",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 12,
+        paddingLeft: 6,
+    },
+    customer: {
+        fontSize: 16,
+        fontWeight: "900",
+        color: INK,
+        letterSpacing: -0.2,
+    },
+    pillsRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        marginTop: 8,
+        flexWrap: "wrap",
+    },
+
+    when: {
+        alignItems: "flex-end",
+        paddingTop: 1,
+    },
+    time: {
+        fontSize: 18,
+        fontWeight: "900",
+        color: INK,
+        letterSpacing: -0.2,
+    },
+    timeOverdue: { color: CFA_RED },
+    date: {
+        marginTop: 4,
+        fontSize: 12,
+        fontWeight: "800",
+        color: MUTED,
+    },
+    dateOverdue: { color: "rgba(229,22,54,0.70)" },
+    dateMuted: { marginTop: 4, fontSize: 12 },
+
+    itemsWrap: {
+        marginTop: 12,
+        paddingTop: 8,
+        paddingLeft: 6,
+    },
+    emptyItems: {
+        fontSize: 13,
+        color: MUTED,
+        fontWeight: "700",
+    },
+    moreText: {
+        marginTop: 10,
+        fontSize: 12,
+        fontWeight: "900",
+        color: MUTED,
+    },
+
+    footerHint: {
+        marginTop: 12,
+        paddingLeft: 6,
+        fontSize: 12,
+        fontWeight: "800",
+        color: "rgba(11,18,32,0.62)",
+    },
+
+    pill: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        borderWidth: 1,
+    },
+    pillDelivery: {
+        backgroundColor: "rgba(229,22,54,0.10)",
+        borderColor: "rgba(229,22,54,0.22)",
+    },
+    pillPickup: {
+        backgroundColor: "rgba(11,18,32,0.06)",
+        borderColor: "rgba(11,18,32,0.10)",
+    },
+    pillText: {
+        fontSize: 12,
+        fontWeight: "900",
+        letterSpacing: 0.2,
+    },
+    pillTextDelivery: { color: CFA_RED },
+    pillTextPickup: { color: INK, opacity: 0.85 },
+
+    badge: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        borderWidth: 1,
+    },
+    badgeIcon: { fontSize: 12, fontWeight: "900", marginTop: -0.5 },
+    badgeText: { fontSize: 12, fontWeight: "900" },
+    overdueChip: {
+        marginLeft: 6,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 999,
+        backgroundColor: "rgba(229,22,54,0.12)",
+        borderWidth: 1,
+        borderColor: "rgba(229,22,54,0.22)",
+    },
+    overdueText: {
+        fontSize: 11,
+        fontWeight: "950",
+        color: CFA_RED,
+        letterSpacing: 0.2,
+    },
+
+    itemsPill: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        backgroundColor: "rgba(11,18,32,0.04)",
+        borderWidth: 1,
+        borderColor: "rgba(11,18,32,0.08)",
+    },
+    itemsPillText: {
+        fontSize: 12,
+        fontWeight: "900",
+        color: "rgba(11,18,32,0.82)",
+    },
+
+    itemLine: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    qtyChip: {
+        minWidth: 22,
+        height: 22,
+        paddingHorizontal: 7,
+        borderRadius: 999,
+        backgroundColor: "rgba(11,18,32,0.06)",
+        borderWidth: 1,
+        borderColor: "rgba(11,18,32,0.10)",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    qtyText: { fontWeight: "900", fontSize: 12, color: INK, opacity: 0.9 },
+    itemText: { flex: 1, fontSize: 13, fontWeight: "800", color: INK, opacity: 0.9 },
+
+    sheen: {
+        position: "absolute",
+        top: -30,
+        right: -30,
+        width: 120,
+        height: 120,
+        borderRadius: 999,
+        backgroundColor: "rgba(255,255,255,0.55)",
+        opacity: 0.18,
+    },
+});
